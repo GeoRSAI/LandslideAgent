@@ -2,9 +2,39 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*$py.class
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+cover/
+
+# Build / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
 
 # Environments
 .venv/
@@ -13,12 +43,14 @@ env/
 .env
 .env.*
 !.env.example
+local_settings.py
 
 # Runtime artifacts
 logs/
 outputs/
 *.log
-.ipynb_checkpoints/
+pip-log.txt
+pip-delete-this-directory.txt
 
 # Model weights and large artifacts
 *.pt
@@ -31,6 +63,12 @@ outputs/
 *.pkl
 *.pickle
 
+# Data stores
+*.sqlite
+*.sqlite3
+db.sqlite3
+db.sqlite3-journal
+
 # Archives
 *.zip
 *.rar
@@ -38,8 +76,17 @@ outputs/
 *.tar
 *.tar.gz
 
+# Notebook / IPython
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
 # OS / IDE
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+
+# Docs
+site/
+docs/_build/

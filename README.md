@@ -1,6 +1,8 @@
 # Landslide Agent
 
-A remote-sensing landslide analysis agent built around a FastAPI frontend, a JSON-RPC tool registry, and segmentation-guided multi-stage reasoning.
+An open-source multimodal landslide dataset and domain-rule augmented agent framework for remote sensing-based landslide identification, geospatial reasoning, and structured disaster report generation.
+
+This repository provides a remote-sensing landslide analysis agent built around a FastAPI frontend, a JSON-RPC tool registry, and segmentation-guided multi-stage reasoning.
 
 ## Features
 
