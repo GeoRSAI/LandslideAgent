@@ -12,6 +12,10 @@ This repository provides a remote-sensing landslide analysis agent built around 
 - OpenMMLab-compatible adapters for MMSegmentation and MMPreTrain
 - Mock LLM mode for running the framework without local large-model weights
 
+## Dataset
+
+The open-source dataset is available on Google Drive: [Download dataset](https://drive.google.com/file/d/1wibzr3qJ4LTCzQzh_jSfEXs48Zla4Nwd/view?usp=sharing).
+
 ## Architecture
 
 Main flow:
