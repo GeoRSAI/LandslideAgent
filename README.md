@@ -71,7 +71,7 @@ Do not commit `.env`, private API keys, model weights, or checkpoints.
 
 ## External Models And Frameworks
 
-This repository does not include large-model weights, OpenMMLab source trees, trained checkpoints, or private datasets. Users should install and configure them separately according to their own licenses:
+The open-source dataset is provided through the Google Drive link above. This repository does not include large-model weights, OpenMMLab source trees, or trained checkpoints. Users should install and configure these external dependencies separately according to their own licenses:
 
 - Large multimodal model, for example a local Qwen-VL compatible model
 - `mmsegmentation` / `mmcv` / `mmengine` for segmentation
