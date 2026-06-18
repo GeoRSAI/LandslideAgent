@@ -1,0 +1,6 @@
+{
+  "llm_first_pass_threshold": 0.55,
+  "small_area_ratio_threshold": 0.2,
+  "llm_second_pass_threshold": 0.60,
+  "min_region_score": 0.45
+}

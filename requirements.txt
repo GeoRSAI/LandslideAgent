@@ -1,0 +1,12 @@
+# Core agent
+requests
+numpy
+# TIFF handling
+rasterio
+
+# Service dependencies (shared)
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Note: Model-specific libs (torch, mmcv, ultralytics) should be installed via conda/pip separately in their envs

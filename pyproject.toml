@@ -1,0 +1,17 @@
+[project]
+name = "landslide-agent"
+version = "0.1.0"
+description = "Minimal remote-sensing landslide agent scaffold"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "numpy",
+    "rasterio",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

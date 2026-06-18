@@ -1,0 +1,2998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Landslide Research Workbench</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&display=swap');
+        :root {
+            --bg-a: #ffffff;
+            --bg-b: #f7f7f8;
+            --bg-c: #f4f4f5;
+            --ink: #202123;
+            --ink-soft: #353740;
+            --muted: #6e6f78;
+            --line: #e5e7eb;
+            --brand: #10a37f;
+            --brand-soft: rgba(16, 163, 127, 0.12);
+            --accent: #202123;
+            --accent-soft: rgba(32, 33, 35, 0.08);
+            --panel: #ffffff;
+            --panel-strong: #ffffff;
+            --nav-deep: #f7f7f8;
+            --nav-mid: #f7f7f8;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'IBM Plex Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: var(--bg-a);
+            color: var(--ink);
+            position: relative;
+            isolation: isolate;
+        }
+        body::before {
+            display: none;
+        }
+        aside, main {
+            position: relative;
+            z-index: 1;
+        }
+        h1, h2, h3, .panel-title, .hero-badge span { letter-spacing: 0.01em; }
+        .sidebar-shell {
+            background: var(--bg-b);
+            backdrop-filter: none;
+            border-right: 1px solid var(--line);
+            border-radius: 0;
+            margin: 0;
+            overflow: hidden;
+            box-shadow: none;
+            animation: slide-in-left 0.55s ease both;
+        }
+        .sidebar-head {
+            background: #ffffff;
+        }
+        .sidebar-item {
+            position: relative;
+            margin: 0 10px;
+            border: 1px solid transparent;
+            border-radius: 10px;
+            color: #454750;
+            transition: all 0.2s ease;
+        }
+        .sidebar-item::before {
+            content: "";
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            width: 3px;
+            height: 0;
+            border-radius: 999px;
+            transform: translateY(-50%);
+            background: #6b7280;
+            transition: height 0.2s ease;
+        }
+        .sidebar-item:hover {
+            background-color: #ececf1;
+            color: #202123;
+            border-color: #e5e7eb;
+        }
+        .sidebar-item:hover::before {
+            height: 16px;
+        }
+        .sidebar-item.active {
+            background: #ececf1;
+            color: #202123;
+            border-color: #d8dbe0;
+        }
+        .sidebar-item.active::before {
+            height: 22px;
+        }
+        .sidebar-bottom-nav {
+            margin-top: 12px;
+            border-top: 1px solid #e5e7eb;
+            padding-top: 10px;
+            padding-bottom: 10px;
+        }
+        .sidebar-action-btn {
+            width: calc(100% - 20px);
+            text-align: left;
+            background: transparent;
+            border: 1px solid transparent;
+            cursor: pointer;
+            font: inherit;
+        }
+        .chat-container {
+            height: calc(100vh - 280px);
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            padding: 8px 4px;
+        }
+        .pipeline-step.active .step-icon { background-color: var(--brand); color: white; }
+        .pipeline-step.completed .step-icon { background-color: #16946b; color: white; }
+        .pipeline-step.pending .step-icon { background-color: #e5e7eb; color: #9ca3af; }
+        .glass-morphism { background: rgba(255, 255, 255, 0.82); backdrop-filter: blur(10px); }
+        .user-message {
+            background: #f3f4f6;
+            color: #202123;
+            border-bottom-right-radius: 0;
+            border: 1px solid #e5e7eb;
+            box-shadow: none;
+        }
+        .bot-message {
+            background: #ffffff;
+            color: var(--ink-soft);
+            border-bottom-left-radius: 0;
+            border: 1px solid #ededf0;
+            box-shadow: none;
+        }
+        .message-bubble {
+            max-width: 85%;
+            word-wrap: break-word;
+            animation: fade-in-up 0.22s ease;
+            border-radius: 12px !important;
+        }
+        .soft-card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            box-shadow: none;
+            backdrop-filter: none;
+            animation: none;
+        }
+        #page-chat > section.soft-card {
+            border-radius: 0 !important;
+            border-color: transparent !important;
+            background: transparent !important;
+            padding: 0 !important;
+        }
+        #composer-shell > .soft-card {
+            background: transparent;
+            border: none;
+            box-shadow: none;
+            padding: 0;
+        }
+        #composer-shell > .soft-card > .soft-card {
+            border: 1px solid #eceef1;
+            border-radius: 10px;
+            background: #ffffff;
+        }
+        #composer-shell > .soft-card.composer-main-card,
+        #composer-shell > .soft-card.second-pass-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+        }
+        #composer-shell > .soft-card.composer-main-card {
+            border-radius: 16px;
+            padding: 14px;
+        }
+        #composer-shell > .soft-card.second-pass-card {
+            border-radius: 14px;
+            padding: 10px 12px;
+        }
+        #composer-shell .composer-input-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            background: #fbfbfc;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        }
+        #page-tools .grid section {
+            background: #ffffff !important;
+            border-color: #eceef1 !important;
+            box-shadow: none !important;
+        }
+        #page-tools .grid section:hover {
+            background: #fafafa !important;
+        }
+        #page-chat > section.soft-card {
+            animation-delay: 0s;
+        }
+        #token-panel .soft-card:nth-child(1) {
+            animation-delay: 0s;
+        }
+        #token-panel .soft-card:nth-child(2) {
+            animation-delay: 0s;
+        }
+        #page-tools .grid > section:nth-child(odd),
+        #page-token .soft-card {
+            animation: none;
+            animation-delay: 0s;
+        }
+        #page-tools .grid > section:nth-child(even) {
+            animation: none;
+            animation-delay: 0s;
+        }
+        #token-panel .soft-card {
+            border-radius: 10px !important;
+            border-color: #eceef1 !important;
+        }
+        #token-panel .soft-card .border-b {
+            background: #ffffff !important;
+        }
+        #page-tools > .w-full.soft-card,
+        #page-token > .w-full.soft-card {
+            border: none !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            padding: 0 !important;
+        }
+        input[type="text"],
+        input[type="number"],
+        textarea {
+            border-color: #e5e7eb !important;
+            background: #ffffff !important;
+            color: var(--ink-soft);
+        }
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        textarea:focus {
+            border-color: #d1d5db !important;
+            box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.06);
+        }
+        .panel-stack {
+            display: grid;
+            grid-template-rows: minmax(180px, 0.8fr) minmax(420px, 1.2fr);
+            gap: 1rem;
+            min-height: 0;
+        }
+        #osm-map {
+            min-height: 220px;
+            width: 100%;
+            border-radius: 1rem;
+            flex-shrink: 0;
+            border: 1px solid rgba(20, 35, 56, 0.14);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+        }
+        .nearby-list {
+            min-height: 150px;
+            max-height: 260px;
+            overflow-y: auto;
+            border: 1px solid rgba(20, 35, 56, 0.12);
+            border-radius: 0.75rem;
+            background: rgba(249, 251, 254, 0.94);
+            flex-shrink: 0;
+        }
+        .nearby-item + .nearby-item {
+            border-top: 1px dashed rgba(20, 35, 56, 0.18);
+        }
+        .status-pill {
+            border-radius: 999px;
+            padding: 2px 8px;
+            border: 1px solid #d1d5db;
+            background: #ffffff;
+            font-family: 'IBM Plex Mono', monospace;
+        }
+        .session-hub {
+            border: none;
+            background: transparent;
+            border-radius: 0;
+            padding: 0;
+            min-height: 0;
+            box-shadow: none;
+        }
+        .session-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .session-count {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 24px;
+            height: 20px;
+            padding: 0 7px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 600;
+            color: #4b5563;
+            border: 1px solid #d1d5db;
+            background: #f9fafb;
+            font-family: 'IBM Plex Mono', monospace;
+        }
+        .session-list-shell {
+            border-radius: 0;
+            border: none;
+            background: transparent;
+            padding: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .session-empty {
+            color: #9ca3af;
+            font-size: 12px;
+            line-height: 1.5;
+            padding: 8px 2px;
+        }
+        .session-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            border: 1px solid transparent;
+            background: transparent;
+            border-radius: 8px;
+            padding: 8px 6px;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        .session-item::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 9px;
+            bottom: 9px;
+            width: 2px;
+            border-radius: 999px;
+            background: transparent;
+            transition: background 0.2s ease;
+        }
+        .session-item:hover {
+            background: #ececf1;
+            border-color: transparent;
+            transform: none;
+        }
+        .session-item.active {
+            background: #eef0f3;
+            border-color: transparent;
+            box-shadow: none;
+        }
+        .session-item.active::after {
+            background: #6b7280;
+        }
+        .session-icon {
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+            border: none;
+            background: transparent;
+            color: #9ca3af;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            flex-shrink: 0;
+        }
+        .session-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #1f2937;
+            line-height: 1.3;
+        }
+        .session-meta {
+            margin-top: 2px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 10px;
+            color: #9ca3af;
+            font-family: 'IBM Plex Mono', monospace;
+        }
+        .session-meta span {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .session-current {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 24px;
+            height: 18px;
+            border-radius: 999px;
+            padding: 0 6px;
+            font-size: 9px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #374151;
+            border: 1px solid #d1d5db;
+            background: #ffffff;
+        }
+        .top-status-inline {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0;
+            border: none;
+            border-radius: 0;
+            background: transparent;
+        }
+        .top-status-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: #6b7280;
+            white-space: nowrap;
+            background: #ffffff;
+            border: 1px solid #eceef1;
+            border-radius: 999px;
+            padding: 2px 8px;
+        }
+        .top-status-item .status-pill {
+            padding: 1px 6px;
+            border-color: #e6e8ec;
+            background: #fafafa;
+        }
+        .btn-primary, .btn-success, .btn-danger {
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+        }
+        .btn-primary {
+            background: #202123;
+            color: #ffffff;
+            border: 1px solid #202123;
+            box-shadow: none;
+        }
+        .btn-success {
+            background: #ffffff;
+            color: #374151;
+            border: 1px solid #d1d5db;
+            box-shadow: none;
+        }
+        .btn-danger {
+            background: #ffffff;
+            color: #b91c1c;
+            border: 1px solid #fecaca;
+            box-shadow: none;
+        }
+        .btn-primary:hover, .btn-success:hover, .btn-danger:hover {
+            filter: none;
+            transform: none;
+        }
+        main {
+            padding: 0;
+        }
+        .topbar-shell {
+            background: #ffffff;
+            backdrop-filter: none;
+            border-bottom: 1px solid #e5e7eb;
+            border-radius: 0;
+            animation: slide-in-top 0.52s ease both;
+        }
+        #header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+        #action-buttons {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        #page-chat,
+        #page-tools,
+        #page-token {
+            padding: 12px !important;
+        }
+        .panel-title {
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            font-size: 11px;
+            color: var(--muted);
+        }
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            color: #4b5563;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        #token-stream,
+        #geo-bg-status,
+        #geo-bg-terrain,
+        #map-status,
+        #nearby-list {
+            font-family: 'IBM Plex Mono', monospace;
+            letter-spacing: 0.01em;
+        }
+        .loading-dots:after { content: ' .'; animation: dots 1s steps(5, end) infinite; }
+        @keyframes dots {
+            0%, 20% { content: ' .'; }
+            40% { content: ' ..'; }
+            60% { content: ' ...'; }
+            80%, 100% { content: ''; }
+        }
+        @keyframes fade-in-up {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes card-fade-in {
+            from { opacity: 0; transform: translateY(8px) scale(0.995); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes slide-in-left {
+            from { opacity: 0; transform: translateX(-16px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes slide-in-top {
+            from { opacity: 0; transform: translateY(-8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @media (max-width: 1280px) {
+            #page-chat {
+                flex-direction: column;
+                overflow-y: auto;
+            }
+            #token-panel {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+            }
+            .panel-stack {
+                grid-template-rows: minmax(200px, auto) minmax(320px, auto);
+            }
+            .chat-container {
+                height: min(56vh, 620px);
+            }
+        }
+        @media (max-width: 1024px) {
+            body {
+                flex-direction: column;
+                min-height: 100vh;
+                height: auto;
+                overflow: auto;
+            }
+            .sidebar-shell {
+                width: 100% !important;
+                border-right: none;
+                border-bottom: 1px solid #e5e7eb;
+                border-radius: 0;
+                margin: 0;
+                box-shadow: none;
+            }
+            main {
+                min-height: 0;
+                padding: 0;
+            }
+            .topbar-shell {
+                border-radius: 0;
+            }
+            #header-actions {
+                width: 100%;
+                justify-content: flex-start;
+                gap: 8px;
+            }
+            #action-buttons {
+                width: 100%;
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+            #action-buttons button {
+                width: 100%;
+            }
+            #page-chat {
+                padding: 0.9rem;
+                gap: 0.9rem;
+            }
+            #composer-shell {
+                max-width: 100%;
+            }
+        }
+        @media (max-width: 640px) {
+            .topbar-shell {
+                padding: 0.8rem 0.9rem !important;
+                height: auto !important;
+                align-items: flex-start;
+                gap: 0.8rem;
+            }
+            .hero-badge {
+                width: 100%;
+                justify-content: center;
+            }
+            #header-actions {
+                width: 100%;
+                display: flex;
+                gap: 8px;
+            }
+            #action-buttons {
+                grid-template-columns: 1fr;
+            }
+            .top-status-inline {
+                width: 100%;
+                justify-content: space-between;
+            }
+            .chat-container {
+                height: min(52vh, 560px);
+                border-radius: 16px;
+            }
+            .message-bubble {
+                max-width: 94%;
+            }
+            #token-panel-body {
+                height: 52vh !important;
+            }
+            .panel-stack {
+                gap: 0.8rem;
+            }
+            #latitude, #longitude {
+                width: 100%;
+            }
+        }
+        /* Academic visual refresh: white, minimalist, research-dashboard tone */
+        :root {
+            --bg-a: #fcfdff;
+            --bg-b: #f8fafd;
+            --bg-c: #f3f6fb;
+            --ink: #1f2937;
+            --ink-soft: #344255;
+            --muted: #64748b;
+            --line: #dbe3ec;
+            --line-strong: #c8d4e2;
+            --brand: #2a4f78;
+            --brand-soft: rgba(42, 79, 120, 0.1);
+            --accent: #1f334d;
+            --accent-soft: rgba(31, 51, 77, 0.08);
+            --panel: #ffffff;
+            --panel-strong: #ffffff;
+            --shadow-card: 0 10px 28px rgba(30, 55, 90, 0.06);
+            --shadow-lift: 0 16px 34px rgba(24, 42, 67, 0.09);
+        }
+        body {
+            background:
+                radial-gradient(circle at 12% -6%, rgba(58, 88, 130, 0.07), transparent 34%),
+                radial-gradient(circle at 90% 0%, rgba(47, 79, 120, 0.06), transparent 42%),
+                linear-gradient(180deg, #fcfdff 0%, #f8fafd 46%, #f6f8fb 100%);
+            color: var(--ink);
+        }
+        body::before {
+            display: block;
+            content: "";
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(35, 57, 86, 0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(35, 57, 86, 0.04) 1px, transparent 1px);
+            background-size: 30px 30px;
+            opacity: 0.16;
+            pointer-events: none;
+            z-index: 0;
+            mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.2));
+        }
+        h1, h2, h3, .panel-title, .hero-badge span {
+            font-family: 'Source Serif 4', 'Noto Serif SC', 'Songti SC', serif;
+            letter-spacing: 0.01em;
+        }
+        .panel-title {
+            color: #5f7288;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+        }
+        .sidebar-shell {
+            background: linear-gradient(180deg, #ffffff 0%, #fafcff 100%);
+            border-right: 1px solid var(--line);
+            box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.82);
+        }
+        .sidebar-head {
+            background: rgba(255, 255, 255, 0.9);
+            border-bottom-color: var(--line) !important;
+        }
+        .sidebar-item {
+            border-radius: 12px;
+            color: #3b4a5e;
+        }
+        .sidebar-item::before {
+            left: 8px;
+            background: var(--brand);
+        }
+        .sidebar-item:hover {
+            background-color: #f1f5fb;
+            color: #20334d;
+            border-color: var(--line);
+        }
+        .sidebar-item.active {
+            background: #eaf1f9;
+            color: #1c3049;
+            border-color: var(--line-strong);
+        }
+        .session-item {
+            border-radius: 10px;
+        }
+        .session-item:hover {
+            background: #f2f6fb;
+        }
+        .session-item.active {
+            background: #edf3fa;
+        }
+        .session-item.active::after {
+            background: var(--brand);
+        }
+        .session-count,
+        .session-current,
+        .status-pill {
+            border-color: var(--line-strong);
+            background: #ffffff;
+        }
+        .topbar-shell {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid var(--line);
+            box-shadow: 0 1px 0 rgba(255, 255, 255, 0.88);
+        }
+        .hero-badge {
+            background: linear-gradient(135deg, #f7f9fd, #eef3f9);
+            border-color: var(--line);
+            color: #384e67;
+        }
+        .top-status-item {
+            border-color: var(--line);
+            color: #5f7188;
+            background: #ffffff;
+        }
+        .top-status-item .status-pill {
+            background: #f8fbff;
+            border-color: #d7e2ee;
+        }
+        .soft-card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            box-shadow: var(--shadow-card);
+            animation: card-fade-in 0.38s ease both;
+        }
+        #page-chat > section.soft-card {
+            border-radius: 18px !important;
+            border-color: var(--line) !important;
+            background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%) !important;
+            padding: 16px !important;
+        }
+        #page-tools > .w-full.soft-card,
+        #page-token > .w-full.soft-card {
+            border: 1px solid var(--line) !important;
+            border-radius: 18px !important;
+            background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%) !important;
+            box-shadow: var(--shadow-card) !important;
+            padding: 20px !important;
+        }
+        #composer-shell > .soft-card.composer-main-card {
+            border-color: var(--line-strong);
+            box-shadow: 0 12px 30px rgba(31, 54, 92, 0.07);
+            background: #ffffff;
+        }
+        #composer-shell > .soft-card.second-pass-card {
+            border-color: var(--line);
+            background: #f8fafd;
+        }
+        #composer-shell .composer-input-card {
+            border-color: #d7e0eb;
+            background: #f9fbfe;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+        }
+        .chat-container {
+            height: calc(100vh - 300px);
+            padding: 10px 8px;
+        }
+        .message-bubble {
+            border-radius: 12px !important;
+            line-height: 1.65;
+        }
+        .user-message {
+            background: #edf3fb;
+            color: #213349;
+            border-color: #d7e2f2;
+        }
+        .bot-message {
+            background: #ffffff;
+            color: #304157;
+            border-color: #d6e0ea;
+        }
+        .message-bubble img {
+            border-color: #d6e0eb !important;
+        }
+        .btn-primary {
+            background: var(--brand);
+            color: #ffffff;
+            border-color: var(--brand);
+        }
+        .btn-primary:hover {
+            background: #213f61;
+            border-color: #213f61;
+        }
+        .btn-success {
+            background: #ffffff;
+            color: #2f475f;
+            border-color: #cfd9e5;
+        }
+        .btn-danger {
+            background: #ffffff;
+            color: #a12a2a;
+            border-color: #e8cbcb;
+        }
+        .btn-success:hover,
+        .btn-danger:hover {
+            background: #f4f7fb;
+            border-color: #bfd0e1;
+        }
+        input[type="text"],
+        input[type="number"],
+        textarea {
+            border-color: #d2dbe7 !important;
+            background: #ffffff !important;
+            color: #2f3f52;
+        }
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        textarea:focus {
+            border-color: #7f9ec3 !important;
+            box-shadow: 0 0 0 3px rgba(42, 79, 120, 0.12) !important;
+        }
+        #page-tools .grid section {
+            background: linear-gradient(180deg, #ffffff, #f9fbff) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: 14px !important;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+        #page-tools .grid section:hover {
+            background: linear-gradient(180deg, #ffffff, #f3f7fc) !important;
+            transform: translateY(-2px);
+            box-shadow: 0 12px 22px rgba(26, 44, 69, 0.08) !important;
+        }
+        #token-panel .soft-card {
+            border-color: var(--line) !important;
+            border-radius: 16px !important;
+            box-shadow: var(--shadow-card) !important;
+        }
+        #token-panel .soft-card .border-b {
+            border-color: var(--line) !important;
+        }
+        #token-panel-body {
+            border-color: var(--line) !important;
+            background: linear-gradient(180deg, #fcfdff, #f8fbff);
+        }
+        #token-stream {
+            color: #334357;
+            font-family: 'IBM Plex Mono', monospace;
+        }
+        #osm-map {
+            border: 1px solid #ccd9e7;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+            border-radius: 0.9rem;
+        }
+        .nearby-list {
+            border-color: #d7e1eb;
+            background: #fbfcff;
+        }
+        .nearby-item + .nearby-item {
+            border-top-color: #d2dce7;
+        }
+        #session-context-menu {
+            border-color: var(--line-strong) !important;
+            background: #ffffff !important;
+            box-shadow: var(--shadow-lift) !important;
+        }
+        #chat-window::-webkit-scrollbar,
+        #token-panel-body::-webkit-scrollbar,
+        #session-list::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        #chat-window::-webkit-scrollbar-thumb,
+        #token-panel-body::-webkit-scrollbar-thumb,
+        #session-list::-webkit-scrollbar-thumb {
+            border-radius: 999px;
+            background: #ccd7e3;
+        }
+        #chat-window::-webkit-scrollbar-track,
+        #token-panel-body::-webkit-scrollbar-track,
+        #session-list::-webkit-scrollbar-track {
+            background: #f4f7fb;
+        }
+        @media (max-width: 1024px) {
+            body::before {
+                opacity: 0.1;
+            }
+            #page-chat > section.soft-card,
+            #page-tools > .w-full.soft-card,
+            #page-token > .w-full.soft-card {
+                border-radius: 14px !important;
+                padding: 14px !important;
+            }
+        }
+        @media (max-width: 640px) {
+            body::before {
+                opacity: 0.07;
+                background-size: 36px 36px;
+            }
+            .hero-badge {
+                padding: 5px 9px;
+            }
+            .chat-container {
+                height: min(52vh, 560px);
+                padding: 8px 4px;
+            }
+            #page-chat > section.soft-card,
+            #page-tools > .w-full.soft-card,
+            #page-token > .w-full.soft-card {
+                padding: 12px !important;
+            }
+        }
+        /* Session list: compact minimalist mode */
+        .session-header {
+            margin-bottom: 6px;
+        }
+        .session-count {
+            min-width: 20px;
+            height: 18px;
+            padding: 0 6px;
+            font-size: 10px;
+            color: #6b7d92;
+            background: transparent;
+            border-color: #d6e1ee;
+        }
+        #session-list {
+            gap: 4px !important;
+        }
+        #session-list > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 4px !important;
+        }
+        .session-item {
+            align-items: center;
+            gap: 0;
+            padding: 7px 8px;
+            border-radius: 8px;
+            border: 1px solid transparent;
+            background: transparent;
+        }
+        .session-item::after {
+            display: none;
+        }
+        .session-item:hover {
+            background: #f5f8fc;
+            border-color: #e3eaf2;
+        }
+        .session-item.active {
+            background: #eef4fb;
+            border-color: #d5e2f1;
+            box-shadow: none;
+        }
+        .session-main {
+            min-width: 0;
+        }
+        .session-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #23364f;
+            line-height: 1.25;
+        }
+        .session-meta {
+            margin-top: 2px;
+            display: block;
+            font-size: 10px;
+            color: #7b8ba0;
+            font-family: 'IBM Plex Mono', monospace;
+        }
+        .session-current,
+        .session-meta span,
+        .session-icon {
+            display: none !important;
+        }
+        /* Final Academic Figure Mode (single, deterministic override layer) */
+        body.academic-mode {
+            background: #f4f6f9;
+            color: #1f2a3a;
+            font-family: 'IBM Plex Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+        }
+        body.academic-mode::before {
+            display: none !important;
+        }
+        body.academic-mode h1,
+        body.academic-mode h2,
+        body.academic-mode h3,
+        body.academic-mode .panel-title {
+            font-family: 'Source Serif 4', 'Noto Serif SC', 'Songti SC', serif;
+            letter-spacing: 0.01em;
+        }
+        body.academic-mode * {
+            transition-duration: 0.12s !important;
+            animation: none !important;
+        }
+        body.academic-mode .sidebar-shell {
+            background: #ffffff;
+            border-right: 1px solid #d6dde7;
+            box-shadow: none;
+        }
+        body.academic-mode .sidebar-head {
+            background: #ffffff;
+            border-bottom: 1px solid #d6dde7 !important;
+        }
+        body.academic-mode .sidebar-item {
+            border-radius: 10px;
+            border: 1px solid transparent;
+            color: #394b63;
+        }
+        body.academic-mode .sidebar-item::before {
+            left: 7px;
+            width: 2px;
+            background: #3a5a7e;
+        }
+        body.academic-mode .sidebar-item:hover {
+            background: #f4f7fb;
+            border-color: #dde5f0;
+            color: #24364f;
+        }
+        body.academic-mode .sidebar-item.active {
+            background: #edf3fa;
+            border-color: #d3deea;
+            color: #20344d;
+        }
+        body.academic-mode .session-count,
+        body.academic-mode .status-pill {
+            border-color: #ccd7e5;
+            background: #ffffff;
+            color: #4c6079;
+        }
+        body.academic-mode .topbar-shell {
+            background: #ffffff;
+            border-bottom: 1px solid #d7dee8;
+            box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+        }
+        body.academic-mode .hero-badge {
+            background: #f6f9fd;
+            border: 1px solid #d5deea;
+            color: #3d526e;
+            font-weight: 600;
+        }
+        body.academic-mode .top-status-item {
+            background: #ffffff;
+            border-color: #d9e1eb;
+            color: #61758f;
+            padding: 3px 8px;
+        }
+        body.academic-mode .soft-card {
+            background: #ffffff;
+            border: 1px solid #d9e1ec;
+            border-radius: 12px;
+            box-shadow: 0 6px 18px rgba(24, 42, 67, 0.06);
+        }
+        body.academic-mode #page-chat,
+        body.academic-mode #page-tools,
+        body.academic-mode #page-token {
+            padding: 14px !important;
+        }
+        body.academic-mode #page-chat > section.soft-card {
+            border-radius: 12px !important;
+            padding: 14px !important;
+            background: #ffffff !important;
+            border-color: #d6deea !important;
+        }
+        body.academic-mode #page-tools > .w-full.soft-card,
+        body.academic-mode #page-token > .w-full.soft-card {
+            border-radius: 12px !important;
+            background: #ffffff !important;
+            border-color: #d6deea !important;
+            padding: 16px !important;
+        }
+        body.academic-mode .chat-container {
+            height: calc(100vh - 304px);
+            border: 1px solid #dce4ef;
+            border-radius: 10px;
+            background: #f9fbfe;
+            padding: 10px;
+        }
+        body.academic-mode .message-bubble {
+            border-radius: 10px !important;
+            box-shadow: none !important;
+            line-height: 1.62;
+        }
+        body.academic-mode .bot-message {
+            background: #ffffff;
+            border: 1px solid #d7e0ec;
+            color: #2f4056;
+        }
+        body.academic-mode .user-message {
+            background: #eaf1fa;
+            border: 1px solid #d3deee;
+            color: #1f3654;
+        }
+        body.academic-mode #composer-shell > .soft-card.composer-main-card {
+            border: 1px solid #d5deea;
+            border-radius: 12px;
+            box-shadow: none;
+            background: #ffffff;
+        }
+        body.academic-mode #composer-shell > .soft-card.second-pass-card {
+            border: 1px solid #dbe3ee;
+            border-radius: 12px;
+            background: #f7faff;
+            box-shadow: none;
+        }
+        body.academic-mode #composer-shell .composer-input-card {
+            border: 1px solid #dbe4ef;
+            border-radius: 10px;
+            background: #f9fbff;
+            box-shadow: none;
+        }
+        body.academic-mode input[type="text"],
+        body.academic-mode input[type="number"],
+        body.academic-mode textarea {
+            border-color: #d0dbe9 !important;
+            color: #2b3e55;
+            background: #ffffff !important;
+        }
+        body.academic-mode input[type="text"]:focus,
+        body.academic-mode input[type="number"]:focus,
+        body.academic-mode textarea:focus {
+            border-color: #6f8eaf !important;
+            box-shadow: 0 0 0 3px rgba(58, 90, 126, 0.14) !important;
+        }
+        body.academic-mode .btn-primary {
+            background: #2f4d70;
+            border-color: #2f4d70;
+            color: #ffffff;
+        }
+        body.academic-mode .btn-primary:hover {
+            background: #253f5d;
+            border-color: #253f5d;
+        }
+        body.academic-mode .btn-success {
+            background: #ffffff;
+            color: #31465f;
+            border-color: #cdd7e5;
+        }
+        body.academic-mode .btn-danger {
+            background: #ffffff;
+            color: #9a3131;
+            border-color: #e5caca;
+        }
+        body.academic-mode .btn-success:hover,
+        body.academic-mode .btn-danger:hover {
+            background: #f5f8fc;
+            border-color: #c4d3e3;
+        }
+        body.academic-mode #token-panel .soft-card {
+            border-radius: 12px !important;
+            border-color: #d7e0eb !important;
+            box-shadow: none !important;
+        }
+        body.academic-mode #token-panel .soft-card .border-b {
+            border-color: #d7e0eb !important;
+            background: #ffffff !important;
+        }
+        body.academic-mode #token-panel-body {
+            border-color: #d6dfea !important;
+            background: #f9fbff !important;
+        }
+        body.academic-mode #osm-map {
+            border: 1px solid #cfdae8;
+            border-radius: 10px;
+            box-shadow: none;
+        }
+        body.academic-mode .nearby-list {
+            border: 1px solid #d8e0ea;
+            background: #fbfcff;
+            border-radius: 10px;
+        }
+        body.academic-mode #page-tools .grid section {
+            border-radius: 10px !important;
+            border-color: #dbe3ed !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+            transform: none !important;
+        }
+        body.academic-mode #page-tools .grid section:hover {
+            background: #f7faff !important;
+        }
+        body.academic-mode #session-context-menu {
+            border-color: #cfd9e6 !important;
+            background: #ffffff !important;
+            box-shadow: 0 12px 24px rgba(25, 43, 67, 0.1) !important;
+        }
+        @media (max-width: 1024px) {
+            body.academic-mode #page-chat > section.soft-card,
+            body.academic-mode #page-tools > .w-full.soft-card,
+            body.academic-mode #page-token > .w-full.soft-card {
+                padding: 12px !important;
+                border-radius: 10px !important;
+            }
+        }
+        @media (max-width: 640px) {
+            body.academic-mode .chat-container {
+                height: min(52vh, 560px);
+            }
+            body.academic-mode .top-status-inline {
+                gap: 6px;
+            }
+        }
+        /* Global Typeface Override */
+        body,
+        body button,
+        body input,
+        body textarea,
+        body select,
+        body option,
+        body label,
+        body p,
+        body span,
+        body div,
+        body a,
+        body li,
+        body td,
+        body th,
+        body h1,
+        body h2,
+        body h3,
+        body h4,
+        body h5,
+        body h6,
+        body small,
+        body strong,
+        body em,
+        body pre,
+        body code {
+            font-family: "Times New Roman", Times, serif !important;
+        }
+    </style>
+</head>
+<body class="academic-mode bg-gray-50 flex h-screen overflow-hidden text-gray-900">
+    <!-- Sidebar -->
+    <aside class="w-64 sidebar-shell flex flex-col shrink-0">
+        <div class="sidebar-head p-6 border-b border-gray-200">
+            <div class="flex items-center space-x-3">
+                <div class="bg-gray-100 p-2.5 rounded-2xl border border-gray-200">
+                    <i class="fas fa-mountain-sun text-gray-600"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg font-extrabold tracking-tight text-gray-800">Landslide Research Console</h1>
+                    <div class="text-[11px] text-gray-500">Remote Sensing Evidence Laboratory</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="px-4 py-4 overflow-hidden flex-grow flex flex-col">
+            <div class="session-hub flex flex-col min-h-0">
+                <div class="session-header">
+                    <p class="text-xs font-semibold text-gray-600 uppercase tracking-[0.14em]">Research Sessions</p>
+                    <span id="session-count" class="session-count">0</span>
+                </div>
+                <div class="session-list-shell">
+                    <div id="session-list" class="space-y-2 overflow-y-auto min-h-0 pr-1">
+                        <div class="session-empty">No chats yet. Click "New Chat" to begin.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <nav class="sidebar-bottom-nav px-2">
+            <button id="new-session-btn" class="sidebar-item sidebar-action-btn flex items-center px-5 py-2.5 transition-colors">
+                <i class="fas fa-plus w-5 mr-3"></i>
+                <span class="font-medium">New Chat</span>
+            </button>
+            <a href="#" id="nav-chat" class="sidebar-item active flex items-center px-5 py-2.5 transition-colors">
+                <i class="fas fa-comment-dots w-5 mr-3"></i>
+                <span class="font-medium">Agent Chat</span>
+            </a>
+            <a href="#" id="nav-tools" class="sidebar-item flex items-center px-5 py-2.5 transition-colors">
+                <i class="fas fa-screwdriver-wrench w-5 mr-3"></i>
+                <span class="font-medium">Tool Guide</span>
+            </a>
+            <a href="#" id="nav-token" class="sidebar-item flex items-center px-5 py-2.5 transition-colors">
+                <i class="fas fa-wave-square w-5 mr-3"></i>
+                <span class="font-medium">Qwen Live Token</span>
+            </a>
+        </nav>
+
+        <div id="session-context-menu" class="fixed z-50 hidden min-w-[132px] overflow-hidden rounded-xl border border-slate-200/70 bg-[rgba(249,251,254,0.98)] shadow-[0_18px_36px_rgba(15,23,42,0.14)] backdrop-blur-[18px]">
+            <button id="context-rename-session" class="w-full px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50/80">Rename Chat</button>
+            <button id="context-delete-session" class="w-full px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50/80">Delete Chat</button>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-grow flex flex-col overflow-hidden relative">
+        <header class="min-h-16 topbar-shell flex items-center justify-between px-8 py-3 shrink-0 gap-4 flex-wrap">
+            <div class="flex items-center gap-4">
+                <div>
+                    <div class="panel-title">Research Workspace</div>
+                    <h2 id="tab-title" class="text-xl font-extrabold text-gray-800">Agent Chat</h2>
+                </div>
+                <div class="hero-badge">
+                    <i class="fas fa-satellite-dish"></i>
+                    <span>Multi-source Evidence Synthesis for Landslide Assessment</span>
+                </div>
+            </div>
+            <div id="header-actions">
+                <div class="top-status-inline">
+                    <div class="top-status-item">
+                        <span>SEG</span>
+                        <span id="seg-status" class="status-pill flex items-center text-gray-400 font-medium">
+                            <span class="w-1.5 h-1.5 rounded-full bg-gray-400 mr-1.5"></span>
+                            Checking
+                        </span>
+                    </div>
+                    <div class="top-status-item">
+                        <span>CLS</span>
+                        <span id="cls-status" class="status-pill flex items-center text-gray-400 font-medium">
+                            <span class="w-1.5 h-1.5 rounded-full bg-gray-400 mr-1.5"></span>
+                            Checking
+                        </span>
+                    </div>
+                    <div class="top-status-item">
+                        <span>LLM</span>
+                        <span id="llm-status" class="status-pill flex items-center text-gray-400 font-medium">
+                            <span class="w-1.5 h-1.5 rounded-full bg-gray-400 mr-1.5"></span>
+                            Checking
+                        </span>
+                    </div>
+                </div>
+                <div id="action-buttons">
+                    <button id="start-services-btn" class="btn-success px-4 py-2 rounded-lg text-sm font-medium transition-all">
+                        <i class="fas fa-play mr-2"></i> Start Dependencies
+                    </button>
+                    <button id="stop-services-btn" class="btn-danger px-4 py-2 rounded-lg text-sm font-medium transition-all">
+                        <i class="fas fa-power-off mr-2"></i> Stop All Services
+                    </button>
+                    <button id="upload-image-btn" class="btn-primary px-4 py-2 rounded-lg text-sm font-medium transition-all">
+                        <i class="fas fa-upload mr-2"></i> Upload Image
+                    </button>
+                    <input id="upload-image-input" type="file" accept="image/*,.tif,.tiff" class="hidden">
+                </div>
+            </div>
+        </header>
+
+        <div id="page-chat" class="flex-grow flex p-6 gap-4 overflow-hidden">
+            <section class="flex-grow flex flex-col soft-card rounded-[28px] p-6 overflow-hidden border-white/50">
+                <div id="chat-window" class="flex-grow overflow-y-auto space-y-4 mb-6 pr-4 chat-container">
+                    <div class="flex justify-start">
+                        <div class="message-bubble bot-message p-4 rounded-2xl shadow-sm">
+                            <p class="text-sm">Landslide analysis agent is ready. Provide a local image path to start evidence-based assessment.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="composer-shell" class="max-w-5xl mx-auto w-full grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_176px] gap-3 items-stretch">
+                    <div class="soft-card composer-main-card rounded-[24px] p-4 border-white/40">
+                        <div class="flex items-center space-x-2 mb-3">
+                            <div class="relative flex-grow">
+                                <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                                    <i class="fas fa-image text-xs"></i>
+                                </span>
+                                <input type="text" id="image-path"
+                                    class="block w-full pl-9 pr-3 py-2 border border-white/60 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-emerald-700 bg-white/80"
+                                    placeholder="Enter local image path (optional, e.g. data/landslide_image.png)">
+                            </div>
+                            <input type="number" step="any" id="latitude"
+                                class="w-36 px-3 py-2 border border-white/60 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-emerald-700 bg-white/80"
+                                placeholder="Latitude">
+                            <input type="number" step="any" id="longitude"
+                                class="w-36 px-3 py-2 border border-white/60 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-emerald-700 bg-white/80"
+                                placeholder="Longitude">
+                        </div>
+                        <div class="soft-card composer-input-card rounded-[22px] p-3 border-white/40">
+                            <div class="flex space-x-3">
+                                <textarea id="user-input" rows="1"
+                                    class="flex-grow px-4 py-3 bg-white/82 border border-white/60 focus:ring-2 focus:ring-emerald-700 rounded-2xl text-sm resize-none overflow-hidden shadow-inner"
+                                    placeholder="Ask your question..."
+                                    oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'"></textarea>
+                                <button id="send-btn" class="btn-primary text-white p-3 rounded-2xl transition-all">
+                                    <i class="fas fa-paper-plane"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <section class="soft-card second-pass-card rounded-[22px] px-3 py-2.5 border-white/40 flex items-center">
+                        <label for="seg-llm-second-pass-toggle" class="cursor-pointer w-full flex items-center justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="text-[13px] font-semibold text-gray-800 leading-4">LLM Review</div>
+                                <div class="text-[10px] text-gray-500 mt-1 leading-4">Second-pass review on segmentation-boundary overlay</div>
+                            </div>
+                            <input id="seg-llm-second-pass-toggle" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-emerald-700 focus:ring-emerald-700 shrink-0">
+                        </label>
+                    </section>
+                </div>
+            </section>
+
+            <aside id="token-panel" class="w-[26rem] max-w-[40%] min-w-[300px] transition-all duration-200">
+                <div id="panel-stack" class="panel-stack h-full">
+                    <section class="soft-card rounded-[24px] flex flex-col overflow-hidden">
+                        <div class="h-12 border-b px-4 flex items-center justify-between shrink-0 bg-white/50">
+                            <div class="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                                <i class="fas fa-layer-group text-amber-600"></i>
+                                <span>Geologic Background & DEM Query</span>
+                            </div>
+                            <button id="toggle-token-panel-btn" class="text-xs px-2 py-1 rounded border text-gray-600 hover:bg-gray-100">Collapse</button>
+                        </div>
+                        <div class="flex-grow overflow-y-auto p-4 text-xs text-gray-700 space-y-3">
+                            <div id="geo-bg-status" class="text-gray-600">Waiting for geo.background results.</div>
+                            <div class="rounded-lg border bg-white p-3">
+                                <div class="font-semibold mb-1">Reverse Geocoding</div>
+                                <div id="geo-bg-address" class="text-gray-600 break-words">N/A</div>
+                            </div>
+                            <div class="rounded-lg border bg-white p-3">
+                                <div class="font-semibold mb-1">Terrain Metrics</div>
+                                <div id="geo-bg-terrain" class="text-gray-600">Elevation: - | Slope: - | Aspect: -</div>
+                            </div>
+                            <div class="rounded-lg border bg-white p-3">
+                                <div class="font-semibold mb-1">Stratigraphy / Lithology</div>
+                                <div id="geo-bg-geology" class="text-gray-600 break-words">N/A</div>
+                            </div>
+                            <div class="rounded-lg border bg-white p-3">
+                                <div class="font-semibold mb-1">Query Warnings</div>
+                                <div id="geo-bg-warnings" class="text-gray-600 break-words">None</div>
+                            </div>
+                        </div>
+                    </section>
+                    <section id="map-panel" class="soft-card rounded-[24px] flex flex-col overflow-hidden min-h-0">
+                        <div class="h-12 border-b px-4 flex items-center justify-between shrink-0 bg-white/50">
+                            <div class="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                                <i class="fas fa-map-location-dot text-emerald-600"></i>
+                                <span>OSM Observation Point & Nearby Facilities</span>
+                            </div>
+                            <button id="reload-nearby-btn" class="text-xs px-2 py-1 rounded border text-gray-600 hover:bg-gray-100">Refresh Nearby</button>
+                        </div>
+                        <div class="p-4 flex flex-col gap-3 h-full min-h-0 overflow-y-auto">
+                            <div id="osm-map"></div>
+                            <div id="map-status" class="text-xs text-gray-600">Waiting for latitude/longitude input.</div>
+                            <div id="nearby-summary" class="text-xs text-gray-700 leading-5"></div>
+                            <div class="text-xs font-semibold text-gray-700">Point List</div>
+                            <div id="nearby-list" class="nearby-list text-xs text-gray-700">
+                                <div class="px-3 py-3 text-gray-500">Points are shown after latitude/longitude input.</div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+                <div id="collapsed-token-rail" class="hidden soft-card rounded-2xl h-full overflow-hidden">
+                    <div class="h-full flex flex-col items-center justify-start py-3 gap-3">
+                        <button id="expand-token-panel-btn" class="text-xs px-2 py-1 rounded border text-gray-600 hover:bg-gray-100">Expand</button>
+                        <span class="text-xs text-gray-500 [writing-mode:vertical-rl]">Geo / Map</span>
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <div id="page-tools" class="hidden flex-grow p-6 overflow-y-auto">
+            <div class="w-full soft-card rounded-2xl p-6">
+                <h3 class="text-lg font-bold mb-4">Research Toolchain Overview</h3>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <section class="rounded-xl border p-4 bg-gray-50/80 hover:bg-blue-50/70 transition-colors">
+                        <div class="font-semibold text-sm mb-2">1. `tiff.info`</div>
+                        <p class="text-sm text-gray-700">Reads image metadata (path, width/height, bands, etc.) as the starting point for all downstream tools.</p>
+                    </section>
+                    <section class="rounded-xl border p-4 bg-gray-50/80 hover:bg-blue-50/70 transition-colors">
+                        <div class="font-semibold text-sm mb-2">2. `image.tile` (On Demand)</div>
+                        <p class="text-sm text-gray-700">Splits large images into tiles when needed; usually skipped for small images to reduce extra computation.</p>
+                    </section>
+                    <section class="rounded-xl border p-4 bg-gray-50/80 hover:bg-blue-50/70 transition-colors">
+                        <div class="font-semibold text-sm mb-2">3. `llm.first_pass`</div>
+                        <p class="text-sm text-gray-700">Performs first-pass scene screening and provides semantic evidence without emitting numeric risk scores.</p>
+                    </section>
+                    <section class="rounded-xl border p-4 bg-gray-50/80 hover:bg-blue-50/70 transition-colors">
+                        <div class="font-semibold text-sm mb-2">4. `seg.run`</div>
+                        <p class="text-sm text-gray-700">Generates pixel-level segmentation masks and estimates landslide coverage as core cross-check evidence.</p>
+                    </section>
+                    <section class="rounded-xl border p-4 bg-gray-50/80 hover:bg-blue-50/70 transition-colors">
+                        <div class="font-semibold text-sm mb-2">5. `boundary.extract` (Boundary Extraction, formerly `seg.refine`)</div>
+                        <p class="text-sm text-gray-700">Reuses the `seg.run` mask to extract candidate regions and build a boundary overlay for later review.</p>
+                    </section>
+                    <section class="rounded-xl border p-4 bg-gray-50/80 hover:bg-blue-50/70 transition-colors">
+                        <div class="font-semibold text-sm mb-2">6. `seg.llm_review` (Optional)</div>
+                        <p class="text-sm text-gray-700">When LLM review is enabled, the system calls `seg.llm_review` after `boundary.extract`: instead of patch crops, it sends the full image with boundary overlay for descriptive review, without adding numeric confidence.</p>
+                    </section>
+                    <section class="rounded-xl border p-4 bg-gray-50/80 hover:bg-blue-50/70 transition-colors">
+                        <div class="font-semibold text-sm mb-2">7. `cls.run` (ConvNeXt, Optional)</div>
+                        <p class="text-sm text-gray-700">Runs landslide type classification and returns class/confidence/top-k as reference only, not as a yes/no vote.</p>
+                    </section>
+                    <section class="rounded-xl border p-4 bg-gray-50/80 hover:bg-blue-50/70 transition-colors">
+                        <div class="font-semibold text-sm mb-2">8. `geo.nearby` (OSM, Optional)</div>
+                        <p class="text-sm text-gray-700">With observation coordinates, queries nearby roads, settlements, buildings, and amenities to enrich spatial context.</p>
+                    </section>
+                    <section class="rounded-xl border p-4 bg-gray-50/80 hover:bg-blue-50/70 transition-colors">
+                        <div class="font-semibold text-sm mb-2">9. `geo.background` (Geologic Background, Optional)</div>
+                        <p class="text-sm text-gray-700">Queries geologic context by coordinates, including reverse address, DEM elevation, slope/aspect, and lithology/stratigraphy.</p>
+                    </section>
+                    <section class="rounded-xl border p-4 bg-gray-50/80 hover:bg-blue-50/70 transition-colors">
+                        <div class="font-semibold text-sm mb-2">10. `fuse.decision`</div>
+                        <p class="text-sm text-gray-700">Fuses first-pass, classification, boundary evidence, and geo context into the final decision and explanation.</p>
+                    </section>
+                </div>
+            </div>
+        </div>
+        <div id="page-token" class="hidden flex-grow p-6 overflow-y-auto">
+            <div class="w-full soft-card rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                        <i class="fas fa-wave-square text-blue-600"></i>
+                        <span id="token-title-text">Qwen Live Token Stream</span>
+                    </div>
+                    <div id="token-controls" class="flex items-center gap-2">
+                        <button id="clear-token-btn" class="text-xs px-2 py-1 rounded border text-gray-600 hover:bg-gray-100">Clear</button>
+                    </div>
+                </div>
+                <div id="token-panel-body" class="h-[70vh] overflow-y-auto rounded-xl border bg-white">
+                    <pre id="token-stream" class="text-xs leading-5 whitespace-pre-wrap break-words p-4 text-gray-700"></pre>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const chatWindow = document.getElementById('chat-window');
+        const userInput = document.getElementById('user-input');
+        const imagePathInput = document.getElementById('image-path');
+        const sendBtn = document.getElementById('send-btn');
+        const latitudeInput = document.getElementById('latitude');
+        const longitudeInput = document.getElementById('longitude');
+        const segLlmSecondPassToggle = document.getElementById('seg-llm-second-pass-toggle');
+        const startServicesBtn = document.getElementById('start-services-btn');
+        const stopServicesBtn = document.getElementById('stop-services-btn');
+        const uploadImageBtn = document.getElementById('upload-image-btn');
+        const uploadImageInput = document.getElementById('upload-image-input');
+        const tabTitle = document.getElementById('tab-title');
+        const navChat = document.getElementById('nav-chat');
+        const navTools = document.getElementById('nav-tools');
+        const navToken = document.getElementById('nav-token');
+        const newSessionBtn = document.getElementById('new-session-btn');
+        const sessionList = document.getElementById('session-list');
+        const sessionContextMenu = document.getElementById('session-context-menu');
+        const contextRenameSessionBtn = document.getElementById('context-rename-session');
+        const contextDeleteSessionBtn = document.getElementById('context-delete-session');
+        const pageChat = document.getElementById('page-chat');
+        const pageTools = document.getElementById('page-tools');
+        const pageToken = document.getElementById('page-token');
+        const tokenPanel = document.getElementById('token-panel');
+        const tokenPanelBody = document.getElementById('token-panel-body');
+        const tokenTitleText = document.getElementById('token-title-text');
+        const tokenControls = document.getElementById('token-controls');
+        const tokenStream = document.getElementById('token-stream');
+        const clearTokenBtn = document.getElementById('clear-token-btn');
+        const toggleTokenPanelBtn = document.getElementById('toggle-token-panel-btn');
+        const expandTokenPanelBtn = document.getElementById('expand-token-panel-btn');
+        const panelStack = document.getElementById('panel-stack');
+        const collapsedTokenRail = document.getElementById('collapsed-token-rail');
+        const mapStatus = document.getElementById('map-status');
+        const nearbySummary = document.getElementById('nearby-summary');
+        const nearbyList = document.getElementById('nearby-list');
+        const reloadNearbyBtn = document.getElementById('reload-nearby-btn');
+        const geoBgStatus = document.getElementById('geo-bg-status');
+        const geoBgAddress = document.getElementById('geo-bg-address');
+        const geoBgTerrain = document.getElementById('geo-bg-terrain');
+        const geoBgGeology = document.getElementById('geo-bg-geology');
+        const geoBgWarnings = document.getElementById('geo-bg-warnings');
+        const SESSION_STORAGE_KEY = 'landslide_agent_sessions_v1';
+        let chatHistory = [];
+        let sessions = [];
+        let activeSessionId = '';
+        let contextMenuSessionId = '';
+        let lastSubmittedImagePath = '';
+        let tokenPanelCollapsed = false;
+        let osmMap = null;
+        let observationMarker = null;
+        let nearbyLayer = null;
+        let lastGeoPoint = null;
+        let lastGeoBackground = null;
+        const EMPTY_ARTIFACTS = Object.freeze({
+            original: '',
+            seg_mask: '',
+            seg_refine_overlay: '',
+        });
+
+        function createSessionTitleFromHistory(history) {
+            const firstUser = (history || []).find((item) => item.role === 'user');
+            if (!firstUser) return 'New Chat';
+            const content = Array.isArray(firstUser.content) ? firstUser.content : [];
+            const textPart = content.find((part) => part.type === 'text' && part.text);
+            const imagePart = content.find((part) => part.type === 'image' && (part.image_path || part.image));
+            if (textPart && String(textPart.text).trim()) {
+                const compact = String(textPart.text).trim().replace(/\s+/g, ' ');
+                return compact.slice(0, 18) + (compact.length > 18 ? '...' : '');
+            }
+            if (imagePart) {
+                const path = String(imagePart.image_path || imagePart.image || '');
+                const name = path.split('/').pop() || 'Image Analysis';
+                return name.slice(0, 18) + (name.length > 18 ? '...' : '');
+            }
+            return 'New Chat';
+        }
+
+        function defaultAssistantGreeting() {
+            return [{
+                role: 'assistant',
+                content: 'Landslide analysis agent is ready. Provide a local image path to start evidence-based assessment.'
+            }];
+        }
+
+        function createDefaultContextState() {
+            return {
+                committedImagePath: '',
+                committedGeoPoint: null,
+                latestArtifacts: { ...EMPTY_ARTIFACTS },
+                draftInputs: {
+                    imagePath: '',
+                    latitude: '',
+                    longitude: '',
+                },
+            };
+        }
+
+        function normalizeArtifacts(artifacts) {
+            return {
+                original: String(artifacts?.original || ''),
+                seg_mask: String(artifacts?.seg_mask || ''),
+                seg_refine_overlay: String(artifacts?.seg_refine_overlay || ''),
+            };
+        }
+
+        function normalizeSession(session) {
+            if (!session || typeof session !== 'object') return session;
+            if (!session.geoState || typeof session.geoState !== 'object') {
+                session.geoState = {
+                    observationPoint: null,
+                    mapStatus: 'Waiting for latitude/longitude input.',
+                    nearbySummaryHtml: '',
+                    nearbyFeatures: [],
+                    backgroundData: null,
+                };
+            } else {
+                session.geoState.observationPoint = session.geoState.observationPoint || null;
+                session.geoState.mapStatus = String(session.geoState.mapStatus || 'Waiting for latitude/longitude input.');
+                session.geoState.nearbySummaryHtml = String(session.geoState.nearbySummaryHtml || '');
+                session.geoState.nearbyFeatures = Array.isArray(session.geoState.nearbyFeatures) ? session.geoState.nearbyFeatures : [];
+                session.geoState.backgroundData = session.geoState.backgroundData || null;
+            }
+            const defaults = createDefaultContextState();
+            const source = (session.contextState && typeof session.contextState === 'object') ? session.contextState : {};
+            const draftInputs = (source.draftInputs && typeof source.draftInputs === 'object') ? source.draftInputs : {};
+            session.contextState = {
+                committedImagePath: String(source.committedImagePath || session.lastImagePath || defaults.committedImagePath),
+                committedGeoPoint: source.committedGeoPoint || session.geoState.observationPoint || defaults.committedGeoPoint,
+                latestArtifacts: normalizeArtifacts(source.latestArtifacts || defaults.latestArtifacts),
+                draftInputs: {
+                    imagePath: String(draftInputs.imagePath || ''),
+                    latitude: String(draftInputs.latitude || ''),
+                    longitude: String(draftInputs.longitude || ''),
+                },
+            };
+            session.lastImagePath = session.contextState.committedImagePath;
+            return session;
+        }
+
+        function getSessionContext(session = getActiveSession()) {
+            if (!session) return createDefaultContextState();
+            normalizeSession(session);
+            return session.contextState;
+        }
+
+        function getEffectiveDraftInputs(session = getActiveSession()) {
+            const context = getSessionContext(session);
+            return {
+                imagePath: String(context.draftInputs?.imagePath || ''),
+                latitude: String(context.draftInputs?.latitude || ''),
+                longitude: String(context.draftInputs?.longitude || ''),
+            };
+        }
+
+        function syncDraftInputsToSession() {
+            const session = getActiveSession();
+            if (!session) return;
+            const context = getSessionContext(session);
+            context.draftInputs = {
+                imagePath: imagePathInput.value.trim(),
+                latitude: latitudeInput.value.trim(),
+                longitude: longitudeInput.value.trim(),
+            };
+            saveSessions();
+        }
+
+        function syncDraftInputsFromSession(session = getActiveSession()) {
+            const draft = getEffectiveDraftInputs(session);
+            imagePathInput.value = draft.imagePath;
+            latitudeInput.value = draft.latitude;
+            longitudeInput.value = draft.longitude;
+        }
+
+        function buildDefaultSession() {
+            const now = new Date().toISOString();
+            return {
+                id: `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                title: 'New Chat',
+                customTitle: false,
+                createdAt: now,
+                updatedAt: now,
+                messages: defaultAssistantGreeting(),
+                lastImagePath: '',
+                uiEntries: [
+                    {
+                        kind: 'assistant_html',
+                        content: marked.parse(defaultAssistantGreeting()[0].content),
+                    }
+                ],
+                tokenLog: '',
+                geoState: {
+                    observationPoint: null,
+                    mapStatus: 'Waiting for latitude/longitude input.',
+                    nearbySummaryHtml: '',
+                    nearbyFeatures: [],
+                    backgroundData: null,
+                },
+                contextState: createDefaultContextState(),
+            };
+        }
+
+        function saveSessions() {
+            localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+                activeSessionId,
+                sessions,
+            }));
+        }
+
+        function loadSessions() {
+            try {
+                const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+                if (!raw) return false;
+                const parsed = JSON.parse(raw);
+                sessions = Array.isArray(parsed.sessions) ? parsed.sessions.map((session) => normalizeSession(session)) : [];
+                activeSessionId = String(parsed.activeSessionId || '');
+                return sessions.length > 0;
+            } catch (_) {
+                sessions = [];
+                activeSessionId = '';
+                return false;
+            }
+        }
+
+        function touchActiveSession() {
+            const session = sessions.find((item) => item.id === activeSessionId);
+            if (!session) return;
+            normalizeSession(session);
+            session.messages = chatHistory;
+            session.lastImagePath = getSessionContext(session).committedImagePath;
+            session.updatedAt = new Date().toISOString();
+            if (!session.customTitle) {
+                session.title = createSessionTitleFromHistory(chatHistory);
+            }
+            sessions.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+            saveSessions();
+            renderSessionList();
+        }
+
+        function getActiveSession() {
+            const session = sessions.find((item) => item.id === activeSessionId) || null;
+            return session ? normalizeSession(session) : null;
+        }
+
+        function normalizeEllipsisText(text) {
+            return String(text || "").replace(/\u2026+/g, ".").replace(/\.\.\.+/g, ".").replace(/\.\./g, ".");
+        }
+
+        function persistUiEntry(entry) {
+            const session = getActiveSession();
+            if (!session) return;
+            if (!Array.isArray(session.uiEntries)) session.uiEntries = [];
+            session.uiEntries.push(entry);
+            touchActiveSession();
+        }
+
+        function persistTokenState() {
+            const session = getActiveSession();
+            if (!session) return;
+            session.tokenLog = String(tokenStream.textContent || '');
+            touchActiveSession();
+        }
+
+        function persistGeoState() {
+            const session = getActiveSession();
+            if (!session) return;
+            const context = getSessionContext(session);
+            context.committedGeoPoint = lastGeoPoint ? { ...lastGeoPoint } : context.committedGeoPoint || null;
+            session.geoState = {
+                observationPoint: lastGeoPoint ? { ...lastGeoPoint } : null,
+                mapStatus: mapStatus.textContent || '',
+                nearbySummaryHtml: nearbySummary.innerHTML || '',
+                nearbyFeatures: Array.isArray(session.geoState?.nearbyFeatures) ? session.geoState.nearbyFeatures : [],
+                backgroundData: lastGeoBackground ? { ...lastGeoBackground } : null,
+            };
+            touchActiveSession();
+        }
+
+        function resetGeoPanel() {
+            lastGeoPoint = null;
+            lastGeoBackground = null;
+            mapStatus.textContent = 'Waiting for latitude/longitude input.';
+            nearbySummary.innerHTML = '';
+            nearbyList.innerHTML = '<div class="px-3 py-3 text-gray-500">Points are shown after latitude/longitude input.</div>';
+            if (observationMarker && osmMap) {
+                osmMap.removeLayer(observationMarker);
+                observationMarker = null;
+            }
+            if (nearbyLayer) nearbyLayer.clearLayers();
+            renderGeoBackgroundCard(null);
+        }
+
+        function renderGeoBackgroundCard(data) {
+            if (!geoBgStatus || !geoBgAddress || !geoBgTerrain || !geoBgGeology || !geoBgWarnings) return;
+            if (!data || typeof data !== "object") {
+                geoBgStatus.textContent = "Waiting for geo.background results.";
+                geoBgAddress.textContent = "N/A";
+                geoBgTerrain.textContent = "Elevation: - | Slope: - | Aspect: -";
+                geoBgGeology.textContent = "N/A";
+                geoBgWarnings.textContent = "None";
+                return;
+            }
+            lastGeoBackground = data;
+            const point = data.observation_point || {};
+            const lat = Number(point.lat);
+            const lon = Number(point.lon);
+            if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                geoBgStatus.textContent = `geo.background updated (lat=${lat.toFixed(6)}, lon=${lon.toFixed(6)})`;
+            } else {
+                geoBgStatus.textContent = "geo.background updated";
+            }
+            const addr = (data.address && typeof data.address === "object") ? data.address : {};
+            const addrText = String(addr.display_name || "").trim();
+            geoBgAddress.textContent = addrText || "N/A";
+            const terrain = (data.terrain && typeof data.terrain === "object") ? data.terrain : {};
+            const elev = (typeof terrain.elevation_m === "number") ? `${terrain.elevation_m.toFixed(2)} m` : "-";
+            const slope = (typeof terrain.slope_deg === "number") ? `${terrain.slope_deg.toFixed(2)} deg` : "-";
+            const aspect = (typeof terrain.aspect_deg === "number") ? `${terrain.aspect_deg.toFixed(2)} deg` : "-";
+            geoBgTerrain.textContent = `Elevation: ${elev} | Slope: ${slope} | Aspect: ${aspect}`;
+            const geology = (data.geology && typeof data.geology === "object") ? data.geology : {};
+            const unit = String(geology.unit_name || "").trim();
+            const lith = String(geology.lithology || "").trim();
+            const age = String(geology.age || "").trim();
+            geoBgGeology.textContent = [unit, lith, age].filter(Boolean).join(" | ") || "N/A";
+            const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+            geoBgWarnings.textContent = warnings.length ? warnings.join(" | ") : "None";
+        }
+
+        function applyGeoState(geoState) {
+            resetGeoPanel();
+            const state = geoState || {};
+            mapStatus.textContent = state.mapStatus || 'Waiting for latitude/longitude input.';
+            nearbySummary.innerHTML = state.nearbySummaryHtml || '';
+            renderNearbyList(Array.isArray(state.nearbyFeatures) ? state.nearbyFeatures : []);
+            renderGeoBackgroundCard(state.backgroundData || null);
+            const point = state.observationPoint;
+            if (point && typeof point.lat === 'number' && typeof point.lon === 'number') {
+                lastGeoPoint = { lat: point.lat, lon: point.lon };
+                observationMarker = L.marker([point.lat, point.lon]).addTo(osmMap);
+                observationMarker.bindPopup(`Observation Point<br>lat=${point.lat.toFixed(6)}<br>lon=${point.lon.toFixed(6)}`);
+                osmMap.setView([point.lat, point.lon], 14);
+                for (const feature of (state.nearbyFeatures || [])) {
+                    const color = feature.type === 'settlement'
+                        ? '#2563eb'
+                        : feature.type === 'amenity'
+                            ? '#059669'
+                            : feature.type === 'road'
+                                ? '#d97706'
+                                : '#6b7280';
+                    const marker = L.circleMarker([feature.lat, feature.lon], {
+                        radius: 5,
+                        color,
+                        weight: 1,
+                        fillColor: color,
+                        fillOpacity: 0.8
+                    });
+                    marker.bindPopup(escapeHtml(classifyFeatureLabel(feature)));
+                    nearbyLayer.addLayer(marker);
+                }
+            }
+        }
+
+        function renderChatWindowFromHistory() {
+            chatWindow.innerHTML = '';
+            const session = getActiveSession();
+            const uiEntries = Array.isArray(session?.uiEntries) ? session.uiEntries : [];
+            if (!uiEntries.length) {
+                for (const msg of chatHistory) {
+                    if (msg.role === 'user') {
+                        const content = Array.isArray(msg.content) ? msg.content : [];
+                        const text = content.filter((part) => part.type === 'text').map((part) => part.text || '').join('\n').trim();
+                        const image = (content.find((part) => part.type === 'image') || {}).image_path || '';
+                        appendMessage('user', buildUserMessageHtml(text, image), true, false);
+                        continue;
+                    }
+                    if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.trim()) {
+                        appendMessage('bot', marked.parse(normalizeEllipsisText(msg.content)), true, false);
+                    }
+                }
+                return;
+            }
+            for (const entry of uiEntries) {
+                if (entry.kind === 'user_html') {
+                    appendMessage('user', entry.content || '', true, false);
+                } else if (entry.kind === 'assistant_html') {
+                    appendMessage('bot', normalizeEllipsisText(entry.content || ''), true, false);
+                } else if (entry.kind === 'tool_card') {
+                    appendToolExecutionCard(entry.toolData || {}, false);
+                } else if (entry.kind === 'artifact_card') {
+                    appendTraceCard([], entry.artifacts || {}, false);
+                }
+            }
+        }
+
+        function setActiveSession(sessionId) {
+            const session = sessions.find((item) => item.id === sessionId);
+            if (!session) return;
+            activeSessionId = session.id;
+            chatHistory = Array.isArray(session.messages) ? session.messages : defaultAssistantGreeting();
+            lastSubmittedImagePath = getSessionContext(session).committedImagePath || '';
+            tokenStream.textContent = String(session.tokenLog || '');
+            syncDraftInputsFromSession(session);
+            renderChatWindowFromHistory();
+            applyGeoState(session.geoState);
+            renderSessionList();
+            saveSessions();
+        }
+
+        function createNewSession() {
+            const session = buildDefaultSession();
+            sessions.unshift(session);
+            activeSessionId = session.id;
+            chatHistory = session.messages;
+            lastSubmittedImagePath = '';
+            tokenStream.textContent = '';
+            syncDraftInputsFromSession(session);
+            resetGeoPanel();
+            renderChatWindowFromHistory();
+            renderSessionList();
+            saveSessions();
+        }
+
+        function deleteSession(sessionId) {
+            sessions = sessions.filter((item) => item.id !== sessionId);
+            if (!sessions.length) {
+                createNewSession();
+                return;
+            }
+            if (activeSessionId === sessionId) {
+                activeSessionId = sessions[0].id;
+                const session = sessions[0];
+                chatHistory = session.messages;
+                lastSubmittedImagePath = getSessionContext(session).committedImagePath || '';
+                tokenStream.textContent = String(session.tokenLog || '');
+                syncDraftInputsFromSession(session);
+                renderChatWindowFromHistory();
+                applyGeoState(session.geoState);
+            }
+            renderSessionList();
+            saveSessions();
+        }
+
+        function renameSession(sessionId) {
+            const session = sessions.find((item) => item.id === sessionId);
+            if (!session) return;
+            const nextTitle = window.prompt('Enter a new chat name', session.title || 'New Chat');
+            if (nextTitle === null) return;
+            const cleanTitle = String(nextTitle).trim();
+            if (!cleanTitle) return;
+            session.title = cleanTitle.slice(0, 40);
+            session.customTitle = true;
+            session.updatedAt = new Date().toISOString();
+            sessions.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+            renderSessionList();
+            saveSessions();
+        }
+
+        function renderSessionList() {
+            const sessionCount = document.getElementById('session-count');
+            if (sessionCount) sessionCount.textContent = String(sessions.length || 0);
+            if (!sessions.length) {
+                sessionList.innerHTML = '<div class="session-empty">No chats yet. Click "New Chat" to begin.</div>';
+                return;
+            }
+            sessionList.innerHTML = sessions.map((session) => {
+                const isActive = session.id === activeSessionId;
+                const time = new Date(session.updatedAt || session.createdAt || Date.now()).toLocaleString('en-US', {
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                });
+                return `
+                    <div class="session-item ${isActive ? 'active' : ''} cursor-pointer" data-session-id="${escapeHtml(session.id)}" title="Right-click for more actions">
+                        <div class="session-main min-w-0 flex-1">
+                            <div class="session-title truncate">${escapeHtml(session.title || 'New Chat')}</div>
+                            <div class="session-meta">${escapeHtml(time)}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        function hideSessionContextMenu() {
+            contextMenuSessionId = '';
+            sessionContextMenu.classList.add('hidden');
+        }
+
+        function showSessionContextMenu(sessionId, x, y) {
+            contextMenuSessionId = sessionId;
+            sessionContextMenu.classList.remove('hidden');
+            const menuWidth = 132;
+            const menuHeight = 80;
+            const left = Math.min(x, window.innerWidth - menuWidth - 12);
+            const top = Math.min(y, window.innerHeight - menuHeight - 12);
+            sessionContextMenu.style.left = `${Math.max(8, left)}px`;
+            sessionContextMenu.style.top = `${Math.max(8, top)}px`;
+        }
+
+        function switchPage(page) {
+            const isChat = page === "chat";
+            const isTools = page === "tools";
+            const isToken = page === "token";
+            navChat.classList.toggle("active", isChat);
+            navTools.classList.toggle("active", isTools);
+            if (navToken) navToken.classList.toggle("active", isToken);
+            pageChat.classList.toggle("hidden", !isChat);
+            pageTools.classList.toggle("hidden", !isTools);
+            if (pageToken) pageToken.classList.toggle("hidden", !isToken);
+            tabTitle.innerText = isChat ? "Agent Chat" : (isTools ? "Tool Guide" : "Qwen Live Token");
+        }
+
+        function appendTokenLine(text) {
+            if (!text) return;
+            tokenStream.textContent += text;
+            tokenPanelBody.scrollTop = tokenPanelBody.scrollHeight;
+            persistTokenState();
+        }
+
+        function appendTokenTagLine(tag, payload) {
+            appendTokenLine(`\n\n[${tag}] ${payload}\n`);
+        }
+
+        function setTokenPanelCollapsed(collapsed) {
+            tokenPanelCollapsed = collapsed;
+            if (collapsed) {
+                tokenPanel.classList.remove('w-[26rem]', 'max-w-[40%]', 'min-w-[300px]');
+                tokenPanel.classList.add('w-14', 'min-w-[56px]');
+                panelStack.classList.add('hidden');
+                collapsedTokenRail.classList.remove('hidden');
+                toggleTokenPanelBtn.innerText = 'Expand';
+            } else {
+                tokenPanel.classList.remove('w-14', 'min-w-[56px]');
+                tokenPanel.classList.add('w-[26rem]', 'max-w-[40%]', 'min-w-[300px]');
+                collapsedTokenRail.classList.add('hidden');
+                panelStack.classList.remove('hidden');
+                toggleTokenPanelBtn.innerText = 'Collapse';
+                if (osmMap) {
+                    setTimeout(() => osmMap.invalidateSize(), 50);
+                }
+            }
+        }
+
+        function initMap() {
+            if (osmMap) return;
+            osmMap = L.map('osm-map', { zoomControl: true }).setView([30.67, 104.06], 5);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(osmMap);
+            nearbyLayer = L.layerGroup().addTo(osmMap);
+        }
+
+        function classifyFeatureLabel(feature) {
+            const subtype = feature.subtype || '';
+            const name = feature.name || '(unnamed)';
+            return `${feature.type}: ${name}${subtype ? ` [${subtype}]` : ''}`;
+        }
+
+        function buildContextSummaryForModel(session = getActiveSession()) {
+            const active = session || getActiveSession();
+            if (!active) return '';
+            const context = getSessionContext(active);
+            const geoState = active.geoState || {};
+            const parts = [];
+
+            if (context.committedImagePath) {
+                parts.push(`Confirmed image path: ${context.committedImagePath}.`);
+            }
+
+            const point = context.committedGeoPoint || geoState.observationPoint || null;
+            if (point && typeof point.lat === 'number' && typeof point.lon === 'number') {
+                parts.push(`Confirmed observation point: lat=${Number(point.lat).toFixed(6)}, lon=${Number(point.lon).toFixed(6)}.`);
+            }
+
+            const features = Array.isArray(geoState.nearbyFeatures) ? geoState.nearbyFeatures : [];
+            if (features.length > 0) {
+                const counts = features.reduce((acc, feature) => {
+                    const key = String(feature.type || 'other');
+                    acc[key] = (acc[key] || 0) + 1;
+                    return acc;
+                }, {});
+                const countText = Object.entries(counts)
+                    .map(([key, value]) => `${key}=${value}`)
+                    .join(', ');
+                const sampleText = features
+                    .slice(0, 8)
+                    .map((feature) => classifyFeatureLabel(feature))
+                    .join(' | ');
+                parts.push(`Persisted OSM nearby findings: ${features.length} feature(s) available (${countText}).`);
+                if (sampleText) {
+                    parts.push(`Nearby feature examples: ${sampleText}.`);
+                }
+            }
+
+            const background = geoState.backgroundData;
+            if (background && typeof background === 'object') {
+                const terrain = (background.terrain && typeof background.terrain === 'object') ? background.terrain : {};
+                const geology = (background.geology && typeof background.geology === 'object') ? background.geology : {};
+                const address = (background.address && typeof background.address === 'object')
+                    ? String(background.address.display_name || '').trim()
+                    : '';
+                const terrainBits = [];
+                if (typeof terrain.elevation_m === 'number') terrainBits.push(`elevation=${terrain.elevation_m.toFixed(2)} m`);
+                if (typeof terrain.slope_deg === 'number') terrainBits.push(`slope=${terrain.slope_deg.toFixed(2)} deg`);
+                if (typeof terrain.aspect_deg === 'number') terrainBits.push(`aspect=${terrain.aspect_deg.toFixed(2)} deg`);
+                const geologyBits = [
+                    String(geology.unit_name || '').trim(),
+                    String(geology.lithology || '').trim(),
+                    String(geology.age || '').trim(),
+                ].filter(Boolean);
+                if (address) {
+                    parts.push(`Persisted reverse-geocoded address: ${address}.`);
+                }
+                if (terrainBits.length > 0) {
+                    parts.push(`Persisted terrain background: ${terrainBits.join(', ')}.`);
+                }
+                if (geologyBits.length > 0) {
+                    parts.push(`Persisted geology background: ${geologyBits.join(' | ')}.`);
+                }
+            }
+
+            return parts.join(' ');
+        }
+
+        function renderNearbyList(features) {
+            if (!features.length) {
+                nearbyList.innerHTML = `
+                    <div class="px-3 py-3 text-gray-500">
+                        No OSM points were found in the current area.
+                    </div>
+                `;
+                return;
+            }
+
+            nearbyList.innerHTML = features.map((feature, index) => `
+                <div class="nearby-item px-3 py-2">
+                    <div class="font-medium text-gray-800">${index + 1}. ${escapeHtml(feature.name || '(unnamed)')}</div>
+                    <div class="text-gray-600">${escapeHtml(feature.type)}${feature.subtype ? ` / ${escapeHtml(feature.subtype)}` : ''}</div>
+                    <div class="text-gray-500">lat=${Number(feature.lat).toFixed(6)}, lon=${Number(feature.lon).toFixed(6)}</div>
+                </div>
+            `).join('');
+        }
+
+        async function loadNearbyFeatures(lat, lon, radius = 300) {
+            mapStatus.textContent = `Querying nearby facilities within ${radius} m...`;
+            nearbySummary.textContent = '';
+            nearbyList.innerHTML = '<div class="px-3 py-3 text-gray-500">Loading point list...</div>';
+            if (nearbyLayer) nearbyLayer.clearLayers();
+            try {
+                const resp = await fetch(`/v1/geo/nearby?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&radius=${radius}`);
+                const data = await resp.json();
+                if (!resp.ok) {
+                    throw new Error(data.detail || `HTTP ${resp.status}`);
+                }
+                applyNearbyFeaturesPayload(data, { updatePoint: true });
+            } catch (error) {
+                mapStatus.textContent = `Nearby query failed: ${error.message}`;
+                nearbySummary.textContent = '';
+                nearbyList.innerHTML = `<div class="px-3 py-3 text-red-600">Point list failed to load: ${escapeHtml(error.message)}</div>`;
+                const session = getActiveSession();
+                if (session) {
+                    if (!session.geoState) session.geoState = {};
+                    session.geoState.nearbyFeatures = [];
+                    persistGeoState();
+                }
+            }
+        }
+
+        function setObservationPoint(point, { openPopup = false, updateStatus = true } = {}) {
+            initMap();
+            if (!point || typeof point.lat !== 'number' || typeof point.lon !== 'number') {
+                // Keep the last resolved geo context when the current turn
+                // does not provide fresh latitude/longitude input.
+                return false;
+            }
+
+            lastGeoPoint = { lat: Number(point.lat), lon: Number(point.lon) };
+            if (observationMarker) {
+                osmMap.removeLayer(observationMarker);
+            }
+            observationMarker = L.marker([lastGeoPoint.lat, lastGeoPoint.lon]).addTo(osmMap);
+            observationMarker.bindPopup(`Observation Point<br>lat=${lastGeoPoint.lat.toFixed(6)}<br>lon=${lastGeoPoint.lon.toFixed(6)}`);
+            if (openPopup) {
+                observationMarker.openPopup();
+            }
+            osmMap.setView([lastGeoPoint.lat, lastGeoPoint.lon], 14);
+            if (updateStatus) {
+                mapStatus.textContent = `Observation Point: lat=${lastGeoPoint.lat.toFixed(6)}, lon=${lastGeoPoint.lon.toFixed(6)}`;
+            }
+            return true;
+        }
+
+        function applyNearbyFeaturesPayload(data, { updatePoint = true } = {}) {
+            initMap();
+            const payload = (data && typeof data === 'object') ? data : {};
+            const features = Array.isArray(payload.features) ? payload.features : [];
+            const point = payload.observation_point || null;
+            if (updatePoint) {
+                setObservationPoint(point, { updateStatus: false });
+            }
+            if (nearbyLayer) nearbyLayer.clearLayers();
+
+            for (const feature of features) {
+                const color = feature.type === 'settlement'
+                    ? '#2563eb'
+                    : feature.type === 'amenity'
+                        ? '#059669'
+                        : feature.type === 'road'
+                            ? '#d97706'
+                            : '#6b7280';
+                const marker = L.circleMarker([feature.lat, feature.lon], {
+                    radius: 5,
+                    color,
+                    weight: 1,
+                    fillColor: color,
+                    fillOpacity: 0.8
+                });
+                marker.bindPopup(escapeHtml(classifyFeatureLabel(feature)));
+                nearbyLayer.addLayer(marker);
+            }
+
+            const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+            const top = features.slice(0, 12);
+            const counts = features.reduce((acc, feature) => {
+                acc[feature.type] = (acc[feature.type] || 0) + 1;
+                return acc;
+            }, {});
+
+            if (warnings.length > 0) {
+                const warningText = escapeHtml(String(warnings[0] || 'OSM nearby context is temporarily unavailable.'));
+                mapStatus.textContent = 'OSM nearby query is temporarily unavailable.';
+                nearbySummary.innerHTML = `
+                    <div class="font-medium mb-1 text-amber-700">Nearby query degraded</div>
+                    <div class="text-amber-700 break-words">${warningText}</div>
+                `;
+                nearbyList.innerHTML = '<div class="px-3 py-3 text-amber-700">Unable to fetch OSM nearby features right now. Please retry later.</div>';
+            } else if (payload.source_status === 'cached') {
+                mapStatus.textContent = `Loaded ${payload.count || 0} cached OSM features.`;
+                nearbySummary.innerHTML = `
+                    <div class="font-medium mb-1">Nearby Summary (Cached)</div>
+                    <div>settlement: ${counts.settlement || 0}, amenity: ${counts.amenity || 0}, road: ${counts.road || 0}, building: ${counts.building || 0}</div>
+                    <div class="mt-1 break-words">${top.map(classifyFeatureLabel).map(escapeHtml).join(' | ') || 'No results'}</div>
+                `;
+                renderNearbyList(features);
+            } else {
+                mapStatus.textContent = `Loaded ${payload.count || 0} OSM features.`;
+                nearbySummary.innerHTML = `
+                    <div class="font-medium mb-1">Nearby Summary</div>
+                    <div>settlement: ${counts.settlement || 0}, amenity: ${counts.amenity || 0}, road: ${counts.road || 0}, building: ${counts.building || 0}</div>
+                    <div class="mt-1 break-words">${top.map(classifyFeatureLabel).map(escapeHtml).join(' | ') || 'No results'}</div>
+                `;
+                renderNearbyList(features);
+            }
+
+            const session = getActiveSession();
+            if (session) {
+                if (!session.geoState) session.geoState = {};
+                session.geoState.nearbyFeatures = features;
+                persistGeoState();
+            }
+        }
+
+        function updateObservationPoint(geo, { openPopup = true, preserveExistingStatus = false } = {}) {
+            const point = geo?.observation_point || null;
+            const currentStatus = String(mapStatus?.textContent || '').trim();
+            const shouldKeepStatus = preserveExistingStatus
+                && currentStatus
+                && currentStatus !== 'Waiting for latitude/longitude input.';
+            if (!setObservationPoint(point, { openPopup, updateStatus: !shouldKeepStatus })) {
+                return;
+            }
+            persistGeoState();
+        }
+
+        function appendMessage(role, content, isHtml = false, persist = true) {
+            const wrapper = document.createElement('div');
+            wrapper.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+            const bubble = document.createElement('div');
+            bubble.className = `message-bubble p-4 rounded-2xl shadow-sm ${role === 'user' ? 'user-message' : 'bot-message'}`;
+            if (isHtml) bubble.innerHTML = content;
+            else bubble.innerText = content;
+            wrapper.appendChild(bubble);
+            chatWindow.appendChild(wrapper);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+            if (persist) {
+                persistUiEntry({
+                    kind: role === 'user' ? 'user_html' : 'assistant_html',
+                    content: isHtml ? content : escapeHtml(content),
+                });
+            }
+            return bubble;
+        }
+
+        function escapeHtml(text) {
+            return String(text)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+        }
+
+        function hasRenderableArtifacts(artifacts) {
+            return Boolean(artifacts && (artifacts.original || artifacts.seg_mask || artifacts.seg_refine_overlay));
+        }
+
+        function appendTraceCard(trace, artifacts, persist = true) {
+            const originalHtml = artifacts?.original
+                ? `<div><div class="text-xs font-semibold mb-1">Original</div><img src="${artifacts.original}" class="w-full rounded border" /></div>`
+                : '<div><div class="text-xs font-semibold mb-1">Original</div><div class="w-full h-40 rounded border bg-gray-50 text-xs text-gray-500 flex items-center justify-center">Not generated</div></div>';
+            const segHtml = artifacts?.seg_mask
+                ? `<div><div class="text-xs font-semibold mb-1">Seg Mask</div><img src="${artifacts.seg_mask}" class="w-full rounded border" /></div>`
+                : '<div><div class="text-xs font-semibold mb-1">Seg Mask</div><div class="w-full h-40 rounded border bg-gray-50 text-xs text-gray-500 flex items-center justify-center">Not generated</div></div>';
+            const refineHtml = artifacts?.seg_refine_overlay
+                ? `<div><div class="text-xs font-semibold mb-1">Refine Overlay</div><img src="${artifacts.seg_refine_overlay}" class="w-full rounded border" /></div>`
+                : '<div><div class="text-xs font-semibold mb-1">Refine Overlay</div><div class="w-full h-40 rounded border bg-gray-50 text-xs text-gray-500 flex items-center justify-center">Not generated</div></div>';
+
+            const rows = (trace || []).map((t, idx) => {
+                const ok = t.status === 'ok';
+                const icon = ok ? '🟢' : '🔴';
+                const title = `Step ${idx + 1} ${icon} ${t.tool} (${t.cost_ms || 0} ms)`;
+                const pretty = escapeHtml(JSON.stringify(t, null, 2));
+                return `<details class="text-sm border rounded-lg p-2 bg-white">
+                    <summary class="cursor-pointer font-medium">${title}</summary>
+                    <pre class="mt-2 p-2 bg-gray-50 rounded text-xs overflow-x-auto whitespace-pre-wrap">${pretty}</pre>
+                </details>`;
+            }).join('');
+
+            const imgs = [originalHtml, segHtml, refineHtml].join('');
+
+            const traceSection = rows
+                ? `<div class="text-sm font-semibold mb-2">Tool Execution Trace</div><div class="space-y-2 mb-3">${rows}</div>`
+                : '';
+
+            const html = `
+                <div class="message-bubble bot-message p-4 rounded-2xl shadow-sm">
+                    ${traceSection}
+                    <div class="text-sm font-semibold mb-2">Result Layers</div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-2">${imgs}</div>
+                </div>
+            `;
+            const wrapper = document.createElement('div');
+            wrapper.className = 'flex justify-start';
+            wrapper.innerHTML = html;
+            chatWindow.appendChild(wrapper);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+            if (persist) {
+                persistUiEntry({
+                    kind: 'artifact_card',
+                    artifacts,
+                });
+            }
+        }
+
+        function appendToolExecutionCard(toolData, persist = true) {
+            const tool = toolData?.tool || 'unknown';
+            const status = toolData?.status || 'unknown';
+            const rawSummary = cleanSummarySentence(toolData?.summary || '');
+            const summary = rawSummary || buildToolSummaryEnglish(tool, toolData?.output || {});
+            const costMs = Number(toolData?.cost_ms || 0);
+            const pretty = escapeHtml(JSON.stringify(toolData || {}, null, 2));
+            const ok = status === 'ok';
+            const badgeClass = ok
+                ? 'text-green-700 bg-green-50 border-green-200'
+                : 'text-red-700 bg-red-50 border-red-200';
+            const html = `
+                <div class="message-bubble bot-message p-4 rounded-2xl shadow-sm">
+                    <details class="text-sm">
+                        <summary class="cursor-pointer list-none">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <div class="font-semibold text-gray-800">${escapeHtml(tool)}</div>
+                                    <div class="text-xs text-gray-600 mt-1 break-all">${escapeHtml(summary)}</div>
+                                </div>
+                                <div class="shrink-0 text-right">
+                                    <div class="inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] ${badgeClass}">
+                                        ${escapeHtml(status)}
+                                    </div>
+                                    <div class="text-[11px] text-gray-500 mt-1">${costMs} ms</div>
+                                </div>
+                            </div>
+                        </summary>
+                        <pre class="mt-3 p-3 bg-gray-50 rounded text-xs overflow-x-auto whitespace-pre-wrap">${pretty}</pre>
+                    </details>
+                </div>
+            `;
+            const wrapper = document.createElement('div');
+            wrapper.className = 'flex justify-start';
+            wrapper.innerHTML = html;
+            chatWindow.appendChild(wrapper);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+            if (persist) {
+                persistUiEntry({
+                    kind: 'tool_card',
+                    toolData,
+                });
+            }
+        }
+
+        function buildUserMessageHtml(text, imagePath, observationPoint = null) {
+            const safeText = escapeHtml(text || '');
+            const safePath = escapeHtml(imagePath || '');
+            const lat = observationPoint && typeof observationPoint.lat === 'number' ? observationPoint.lat : null;
+            const lon = observationPoint && typeof observationPoint.lon === 'number' ? observationPoint.lon : null;
+            const locationHtml = (lat !== null && lon !== null)
+                ? `<div class="text-xs text-gray-600 break-all">Observation Point: ${escapeHtml(Number(lat).toFixed(6))}, ${escapeHtml(Number(lon).toFixed(6))}</div>`
+                : '';
+            if (!imagePath) return `${locationHtml}<div class="whitespace-pre-wrap">${safeText}</div>`;
+            const mediaUrl = `/media?path=${encodeURIComponent(imagePath)}`;
+            return `
+                <div class="space-y-2">
+                    <div class="text-xs text-gray-600 break-all">Image Path: ${safePath}</div>
+                    ${locationHtml}
+                    <img
+                        src="${mediaUrl}"
+                        class="max-h-72 rounded-lg border object-contain bg-white"
+                        alt="user image"
+                        onerror="this.insertAdjacentHTML('afterend','<div class=&quot;text-xs text-red-600&quot;>Image preview failed. Check that the path exists and is accessible.</div>'); this.style.display='none';"
+                    />
+                    ${safeText ? `<div class="whitespace-pre-wrap">${safeText}</div>` : ''}
+                </div>
+            `;
+        }
+
+        function buildToolSummaryEnglish(tool, output) {
+            const data = (output && typeof output === 'object') ? output : {};
+            if (data.error) {
+                const err = String(data.error).replace(/\s+/g, ' ').trim();
+                return `${tool}: fail (${err})`;
+            }
+
+            if (tool === 'tiff.info') {
+                const w = data.width ?? '?';
+                const h = data.height ?? '?';
+                const bands = data.bands ?? '?';
+                return `meta ${w}x${h} b${bands}`;
+            }
+
+            if (tool === 'llm.first_pass') {
+                const has = data.has_landslide === true ? 'likely' : 'unlikely';
+                return `first-pass ${has}`;
+            }
+
+            if (tool === 'cls.run') {
+                const cls = data.class_name || `class_${data.class_id ?? '?'}`;
+                const conf = (typeof data.confidence === 'number') ? ` ${data.confidence.toFixed(2)}` : '';
+                return `class ${cls}${conf}`;
+            }
+
+            if (tool === 'seg.refine') {
+                const count = Array.isArray(data.regions) ? data.regions.length : 0;
+                const ratio = (typeof data.area_ratio === 'number') ? ` r=${data.area_ratio.toFixed(3)}` : '';
+                return `seg-guided regions=${count}${ratio}`;
+            }
+
+            if (tool === 'seg.llm_review') {
+                const reviewed = Number(data.review_candidates || 0);
+                const executed = data.llm_second_pass && typeof data.llm_second_pass === 'object';
+                if (data.llm_second_pass_skipped_for_large_area) return `llm review skipped`;
+                return executed ? `llm review regions=${reviewed}` : `llm review pending`;
+            }
+
+            if (tool === 'seg.run') {
+                const ratio = (typeof data.area_ratio === 'number') ? data.area_ratio.toFixed(3) : '?';
+                const px = data.landslide_pixels ?? 0;
+                return `seg r=${ratio} px=${px}`;
+            }
+
+            if (tool === 'geo.nearby') {
+                const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+                if (warnings.length > 0) return 'geo nearby unavailable';
+                const count = data.count ?? 0;
+                const radius = data.radius_m ?? '?';
+                if (data.source_status === 'cached') return `geo nearby cached=${count} r=${radius}m`;
+                return `geo nearby=${count} r=${radius}m`;
+            }
+            if (tool === 'geo.background') {
+                const terrain = (data.terrain && typeof data.terrain === 'object') ? data.terrain : {};
+                const geology = (data.geology && typeof data.geology === 'object') ? data.geology : {};
+                const elev = (typeof terrain.elevation_m === 'number') ? terrain.elevation_m.toFixed(1) : '?';
+                const slope = (typeof terrain.slope_deg === 'number') ? terrain.slope_deg.toFixed(1) : '?';
+                const aspect = (typeof terrain.aspect_deg === 'number') ? terrain.aspect_deg.toFixed(1) : '?';
+                const lith = String(geology.lithology || geology.unit_name || 'n/a').replace(/\s+/g, ' ').trim();
+                return `geo bg z=${elev}m slope=${slope}deg aspect=${aspect}deg lith=${lith}`;
+            }
+
+
+            if (tool === 'fuse.decision') {
+                const has = data.has_landslide === true ? 'yes' : (data.has_landslide === false ? 'no' : '?');
+                const sev = String(data.severity || 'n/a');
+                return `fuse landslide=${has} sev=${sev}`;
+            }
+
+            if (tool === 'report.write') {
+                const path = String(data.report_path || '').trim();
+                return path ? `report saved ${path}` : 'report saved';
+            }
+
+            return `${tool} done`;
+        }
+
+        function buildToolResultMessage(tool, status, output, summary = '') {
+            const llmSummary = cleanSummarySentence(summary || '');
+            if (llmSummary) {
+                return llmSummary;
+            }
+            const data = (output && typeof output === 'object') ? output : {};
+            if (status !== 'ok') {
+                return `${tool} failed.`;
+            }
+            if (tool === 'geo.nearby') {
+                const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+                if (warnings.length > 0) {
+                    const msg = String(warnings[0] || '').replace(/\s+/g, ' ').trim();
+                    return msg || 'Nearby context is temporarily unavailable; the report continues without OSM nearby features.';
+                }
+                const count = Number(data.count || 0);
+                if (data.source_status === 'cached') {
+                    return `Nearby context loaded from cache: ${count} features.`;
+                }
+                return `Nearby context retrieved: ${count} features.`;
+            }
+            if (tool === 'geo.background') {
+                const terrain = (data.terrain && typeof data.terrain === 'object') ? data.terrain : {};
+                const geology = (data.geology && typeof data.geology === 'object') ? data.geology : {};
+                const slope = (typeof terrain.slope_deg === 'number') ? `${terrain.slope_deg.toFixed(1)}°` : 'unknown';
+                const lith = String(geology.lithology || geology.unit_name || '').trim();
+                return lith ? `Geologic background updated: slope ${slope}, lithology ${lith}.` : `Geologic background updated: slope ${slope}.`;
+            }
+            if (tool === 'seg.refine') {
+                const count = Array.isArray(data.regions) ? data.regions.length : 0;
+                return `Segmentation-guided refinement finished: ${count} candidate regions.`;
+            }
+            if (tool === 'seg.llm_review') {
+                if (data.llm_second_pass_skipped_for_large_area) return 'LLM second-pass review was not executed.';
+                const reviewed = Number(data.review_candidates || 0);
+                const evidence = String(((data.llm_second_pass || {}).evidence || '')).trim();
+                if (evidence) return `LLM second-pass review finished: whole-image boundary-overlay re-check over ${reviewed} candidate regions.`;
+                return reviewed > 0 ? `A whole-image boundary-overlay review was prepared for ${reviewed} candidate regions, but no second-pass conclusion was returned.` : 'No whole-image boundary-overlay review input was available for LLM second-pass review.';
+            }
+            if (tool === 'seg.run') {
+                const ratio = (typeof data.area_ratio === 'number') ? `${(data.area_ratio * 100).toFixed(2)}%` : 'unknown';
+                return `Segmentation finished: landslide area ratio ${ratio}.`;
+            }
+            if (tool === 'cls.run') {
+                const label = String(data.class_name || data.label || 'unknown').trim();
+                return `Classification finished: ${label}.`;
+            }
+            if (tool === 'llm.first_pass') {
+                const decision = data.has_landslide === true ? 'likely landslide' : (data.has_landslide === false ? 'likely non-landslide' : 'completed');
+                return `First-pass screening finished: ${decision}.`;
+            }
+            if (tool === 'tiff.info') {
+                const w = data.width ?? '?';
+                const h = data.height ?? '?';
+                return `Image metadata loaded: ${w} x ${h}.`;
+            }
+            if (tool === 'fuse.decision') {
+                return 'Final fused decision completed.';
+            }
+            if (tool === 'report.write') {
+                const path = String(data.report_path || '').trim();
+                return path ? `Final report written to ${path}.` : 'Final report written.';
+            }
+            return `${tool} completed.`;
+        }
+
+        function cleanSummarySentence(value) {
+            const text = String(value || '').replace(/\s+/g, ' ').trim();
+            if (!text) return '';
+            const stripped = text.replace(/[.!?]+$/g, '').toLowerCase();
+            const badTails = [
+                ' a', ' an', ' the', ' of', ' to', ' near', ' near a',
+                ' adjacent to', ' adjacent to a', ' with', ' by', ' in',
+                ' on', ' at', ' from', ' as', ' for'
+            ];
+            const badShortTail = /\b(?:near|adjacent to|beside|next to|with|of|to|from|in|on|at|by|for)\s+(?:a|an|the)\s+[a-z]{1,3}$/.test(stripped);
+            if (badShortTail || badTails.some(tail => stripped.endsWith(tail))) {
+                const lastBoundary = Math.max(text.lastIndexOf('.'), text.lastIndexOf('!'), text.lastIndexOf('?'));
+                return lastBoundary >= 0 ? text.slice(0, lastBoundary + 1).trim() : '';
+            }
+            return /[.!?]$/.test(text) ? text : `${text}.`;
+        }
+
+        function buildPersistedToolContent(toolData) {
+            const payload = (toolData && typeof toolData.output === 'object')
+                ? toolData.output
+                : { raw_output: toolData?.output ?? null };
+            return JSON.stringify(payload);
+        }
+
+        async function uploadSelectedImage(file) {
+            if (!file) return;
+            const form = new FormData();
+            form.append("file", file);
+            if (uploadImageBtn) {
+                uploadImageBtn.disabled = true;
+                uploadImageBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Uploading';
+            }
+            try {
+                const resp = await fetch("/v1/media/upload", { method: "POST", body: form });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+                imagePathInput.value = data.path || "";
+                syncDraftInputsToSession();
+                appendMessage("bot", `Image uploaded: ${data.name || ""}<br>Path has been filled into the input box.`, true);
+            } catch (error) {
+                appendMessage('bot', `Upload failed: ${error.message}`, false);
+            } finally {
+                if (uploadImageBtn) {
+                    uploadImageBtn.disabled = false;
+                    uploadImageBtn.innerHTML = '<i class="fas fa-upload mr-2"></i> Upload Image';
+                }
+                if (uploadImageInput) uploadImageInput.value = "";
+            }
+        }
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            const imagePath = imagePathInput.value.trim();
+            const latitude = latitudeInput.value.trim();
+            const longitude = longitudeInput.value.trim();
+            const enableSegLlmSecondPass = !!(segLlmSecondPassToggle && segLlmSecondPassToggle.checked);
+            if (!text && !imagePath) return;
+
+            const session = getActiveSession();
+            const context = getSessionContext(session);
+            const committedImagePath = String(context.committedImagePath || '');
+            const hasDraftGeo = latitude !== '' && longitude !== '';
+            const effectiveGeoPoint = hasDraftGeo
+                ? { lat: Number(latitude), lon: Number(longitude) }
+                : (
+                    context.committedGeoPoint
+                    && typeof context.committedGeoPoint.lat === 'number'
+                    && typeof context.committedGeoPoint.lon === 'number'
+                )
+                    ? { ...context.committedGeoPoint }
+                    : null;
+
+            if (imagePath && committedImagePath && imagePath !== committedImagePath) {
+                chatHistory = [];
+                appendMessage('bot', 'New image detected. A new analysis session was started automatically.', false);
+            }
+
+            const userHtml = buildUserMessageHtml(text, imagePath, effectiveGeoPoint);
+            appendMessage('user', userHtml, true);
+            userInput.value = '';
+            userInput.style.height = 'auto';
+
+            const userContent = [];
+            if (imagePath) userContent.push({ type: 'image', image_path: imagePath });
+            if (text) userContent.push({ type: 'text', text: text });
+            chatHistory.push({ role: 'user', content: userContent });
+            if (imagePath) {
+                context.committedImagePath = imagePath;
+                lastSubmittedImagePath = imagePath;
+            }
+            if (hasDraftGeo) {
+                context.committedGeoPoint = { lat: Number(latitude), lon: Number(longitude) };
+            }
+            touchActiveSession();
+
+            const loader = appendMessage('bot', '<span>Thinking</span><span class="loading-dots"></span>', true);
+            sendBtn.disabled = true;
+
+            try {
+                const payload = { messages: chatHistory, temperature: 0.2, enable_seg_llm_second_pass: enableSegLlmSecondPass };
+                if (effectiveGeoPoint) {
+                    payload.latitude = Number(effectiveGeoPoint.lat);
+                    payload.longitude = Number(effectiveGeoPoint.lon);
+                }
+                const contextSummary = buildContextSummaryForModel(session);
+                if (contextSummary) {
+                    payload.context_summary = contextSummary;
+                }
+                const response = await fetch('/v1/agent/analyze_stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                loader.remove();
+                if (!response.ok || !response.body) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let finalData = null;
+                let finalAssistantShown = false;
+                let lastRenderedAssistantContent = '';
+                const streamedArtifacts = { original: '', seg_mask: '', seg_refine_overlay: '' };
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        const raw = line.trim();
+                        if (!raw) continue;
+                        const event = JSON.parse(raw);
+
+                        if (event.type === 'assistant') {
+                            const rawContent = String(event.content || '');
+                            const renderedContent = normalizeEllipsisText(rawContent);
+                            const content = rawContent.trim();
+                            if (content) {
+                                appendTokenLine(rawContent);
+                            } else if ((event.tool_calls || []).length > 0) {
+                                const plannedTools = (event.tool_calls || [])
+                                    .map((call) => ((call || {}).function || {}).name || 'unknown')
+                                    .filter(Boolean);
+                                appendTokenTagLine(
+                                    'TOOL_PLAN',
+                                    plannedTools.length > 0 ? plannedTools.join(' -> ') : 'unknown'
+                                );
+                            }
+                            if (content) {
+                                if ((event.tool_calls || []).length === 0) {
+                                    const finalRenderedContent = renderedContent.trim();
+                                    finalAssistantShown = true;
+                                    lastRenderedAssistantContent = finalRenderedContent;
+                                    appendMessage('bot', marked.parse(finalRenderedContent), true);
+                                }
+                            }
+                        } else if (event.type === 'tool_call') {
+                            appendTokenTagLine('TOOL_CALL', `${event.name} ${JSON.stringify(event.arguments || {})}`);
+                        } else if (event.type === 'tool_result') {
+                            const d = event.data || {};
+                            appendTokenTagLine('TOOL_RESULT', `${d.tool} status=${d.status}`);
+                            appendToolExecutionCard(d);
+                            appendMessage('bot', buildToolResultMessage(d.tool, d.status, d.output || {}, d.summary || ''), false);
+                            if (d.tool) {
+                                chatHistory.push({
+                                    role: 'tool',
+                                    name: String(d.tool),
+                                    content: buildPersistedToolContent(d),
+                                });
+                                touchActiveSession();
+                            }
+                            if (d.status === 'ok') {
+                                const out = (d.output && typeof d.output === 'object') ? d.output : {};
+                                if (d.tool === 'tiff.info') {
+                                    const p = String(out.image_path || '').trim();
+                                    if (p) streamedArtifacts.original = `/media?path=${encodeURIComponent(p)}`;
+                                } else if (d.tool === 'seg.run') {
+                                    const p = String(out.overlay_path || out.mask_path || '').trim();
+                                    if (p) streamedArtifacts.seg_mask = `/media?path=${encodeURIComponent(p)}`;
+                                } else if (d.tool === 'seg.refine') {
+                                    const p = String(out.overlay_path || '').trim();
+                                    if (p) streamedArtifacts.seg_refine_overlay = `/media?path=${encodeURIComponent(p)}`;
+                                }
+                            }
+                            if (d.tool === 'geo.nearby' && d.status === 'ok') {
+                                applyNearbyFeaturesPayload(d.output || {}, { updatePoint: true });
+                            }
+                            if (d.tool === 'geo.background' && d.status === 'ok') {
+                                setObservationPoint((d.output || {}).observation_point || null, { updateStatus: false });
+                                renderGeoBackgroundCard(d.output || {});
+                                persistGeoState();
+                            }
+                        } else if (event.type === 'model_raw') {
+                            const rawModelText = String(event.content || '');
+                            const rawSource = String(event.source || 'agent');
+                            if (rawModelText.trim()) {
+                                appendTokenLine(`\n\n[MODEL_RAW:${rawSource}]\n${rawModelText}\n[/MODEL_RAW]\n`);
+                            }
+                        } else if (event.type === 'final') {
+                            finalData = event.data || null;
+                        } else if (event.type === 'error') {
+                            appendTokenTagLine('ERROR', event.error || 'unknown error');
+                            appendMessage('bot', `Stream error: ${event.error || 'unknown error'}`, false);
+                        }
+                    }
+                }
+
+                if (buffer.trim()) {
+                    try {
+                        const event = JSON.parse(buffer.trim());
+                        if (event.type === 'final') finalData = event.data || null;
+                    } catch (_) {}
+                }
+
+                if (finalData && finalData.choices && finalData.choices.length > 0) {
+                    const assistantMessage = finalData.choices[0].message || {};
+                    const rawAssistantContent = String(assistantMessage.content || '');
+                    assistantMessage.content = normalizeEllipsisText(rawAssistantContent);
+                    chatHistory.push(assistantMessage);
+                    touchActiveSession();
+                    updateObservationPoint(finalData.geo || null, { openPopup: true, preserveExistingStatus: true });
+                    const finalContent = String(assistantMessage.content || '').trim();
+                    const rawFinalContent = rawAssistantContent.trim();
+                    const looksStructuredFinal = finalContent.includes('### Conclusion\n') && finalContent.includes('### Final Determination\n');
+                    if (rawFinalContent && (!finalAssistantShown || looksStructuredFinal) && finalContent !== lastRenderedAssistantContent) {
+                        appendTokenLine(rawAssistantContent);
+                        appendMessage('bot', marked.parse(finalContent), true);
+                        finalAssistantShown = true;
+                        lastRenderedAssistantContent = finalContent;
+                    }
+                    const resolvedArtifacts = (finalData.artifacts && typeof finalData.artifacts === 'object')
+                        ? { ...finalData.artifacts }
+                        : {};
+                    if (!resolvedArtifacts.original && streamedArtifacts.original) {
+                        resolvedArtifacts.original = streamedArtifacts.original;
+                    }
+                    if (!resolvedArtifacts.seg_mask && streamedArtifacts.seg_mask) {
+                        resolvedArtifacts.seg_mask = streamedArtifacts.seg_mask;
+                    }
+                    if (!resolvedArtifacts.seg_refine_overlay && streamedArtifacts.seg_refine_overlay) {
+                        resolvedArtifacts.seg_refine_overlay = streamedArtifacts.seg_refine_overlay;
+                    }
+                    getSessionContext().latestArtifacts = normalizeArtifacts(resolvedArtifacts);
+                    touchActiveSession();
+                    if (hasRenderableArtifacts(resolvedArtifacts)) {
+                        appendTraceCard([], resolvedArtifacts);
+                    }
+                }
+            } catch (error) {
+                appendTokenTagLine('ERROR', error.message);
+                loader.innerText = `Error: ${error.message}`;
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        imagePathInput.addEventListener('input', syncDraftInputsToSession);
+        latitudeInput.addEventListener('input', syncDraftInputsToSession);
+        longitudeInput.addEventListener('input', syncDraftInputsToSession);
+        if (uploadImageBtn && uploadImageInput) {
+            uploadImageBtn.addEventListener('click', () => uploadImageInput.click());
+            uploadImageInput.addEventListener('change', async () => {
+                const file = uploadImageInput.files && uploadImageInput.files[0];
+                if (file) await uploadSelectedImage(file);
+            });
+        }
+        userInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+        navChat.addEventListener('click', (e) => { e.preventDefault(); switchPage('chat'); });
+        navTools.addEventListener('click', (e) => { e.preventDefault(); switchPage('tools'); });
+        if (navToken) navToken.addEventListener('click', (e) => { e.preventDefault(); switchPage('token'); });
+        if (clearTokenBtn) clearTokenBtn.addEventListener('click', () => { tokenStream.textContent = ''; persistTokenState(); });
+        toggleTokenPanelBtn.addEventListener('click', () => { setTokenPanelCollapsed(!tokenPanelCollapsed); });
+        expandTokenPanelBtn.addEventListener('click', () => { setTokenPanelCollapsed(false); });
+        newSessionBtn.addEventListener('click', () => {
+            createNewSession();
+            switchPage('chat');
+        });
+        sessionList.addEventListener('click', (e) => {
+            const item = e.target.closest('[data-session-id]');
+            if (item) {
+                hideSessionContextMenu();
+                setActiveSession(item.dataset.sessionId || '');
+                switchPage('chat');
+            }
+        });
+        sessionList.addEventListener('contextmenu', (e) => {
+            const item = e.target.closest('[data-session-id]');
+            if (!item) return;
+            e.preventDefault();
+            showSessionContextMenu(item.dataset.sessionId || '', e.clientX, e.clientY);
+        });
+        contextRenameSessionBtn.addEventListener('click', () => {
+            if (contextMenuSessionId) {
+                renameSession(contextMenuSessionId);
+            }
+            hideSessionContextMenu();
+        });
+        contextDeleteSessionBtn.addEventListener('click', () => {
+            if (contextMenuSessionId) {
+                deleteSession(contextMenuSessionId);
+            }
+            hideSessionContextMenu();
+        });
+        document.addEventListener('click', () => { hideSessionContextMenu(); });
+        window.addEventListener('resize', () => { hideSessionContextMenu(); });
+        window.addEventListener('scroll', () => { hideSessionContextMenu(); }, true);
+        reloadNearbyBtn.addEventListener('click', async () => {
+            if (!lastGeoPoint) {
+                mapStatus.textContent = 'No observation point available to refresh.';
+                return;
+            }
+            await loadNearbyFeatures(lastGeoPoint.lat, lastGeoPoint.lon);
+        });
+
+        function setStatusBadge(id, isOnline) {
+            const badge = document.getElementById(id);
+            if (!badge) return;
+            if (isOnline) {
+                badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5"></span>Online';
+                badge.className = 'status-pill flex items-center text-green-600 font-medium';
+            } else {
+                badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-red-500 mr-1.5"></span>Offline';
+                badge.className = 'status-pill flex items-center text-red-600 font-medium';
+            }
+        }
+
+        async function refreshSystemStatus() {
+            try {
+                const resp = await fetch('/admin/services', { method: 'GET' });
+                if (!resp.ok) throw new Error('status api failed');
+                const data = await resp.json();
+                const llmOnline = data.llm_service_online !== undefined ? !!data.llm_service_online : !!data.llm;
+                const segOnline = data.seg_service_online !== undefined ? !!data.seg_service_online : !!data.seg;
+                const clsOnline = data.cls_service_online !== undefined ? !!data.cls_service_online : !!data.cls;
+                setStatusBadge('llm-status', llmOnline);
+                setStatusBadge('seg-status', segOnline);
+                setStatusBadge('cls-status', clsOnline);
+            } catch (e) {
+                setStatusBadge('llm-status', false);
+                setStatusBadge('seg-status', false);
+                setStatusBadge('cls-status', false);
+            }
+        }
+
+        async function startServices() {
+            startServicesBtn.disabled = true;
+            startServicesBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Starting';
+            try {
+                const resp = await fetch('/admin/start_services', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ start_seg: true, start_cls: true })
+                });
+                const data = await resp.json();
+                appendMessage('bot', `Service start result: ${JSON.stringify(data)}`);
+                await refreshSystemStatus();
+            } catch (error) {
+                appendMessage('bot', `Start failed: ${error.message}`);
+            } finally {
+                startServicesBtn.disabled = false;
+                startServicesBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Start Dependencies';
+            }
+        }
+
+        async function stopAllServices() {
+            const confirmed = window.confirm('This will stop SegFormer, ConvNeXt, and current system services. Continue?');
+            if (!confirmed) return;
+            stopServicesBtn.disabled = true;
+            stopServicesBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Stopping';
+            try {
+                const resp = await fetch('/admin/stop_services', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ stop_seg: true, stop_cls: true, stop_llm: true })
+                });
+                const data = await resp.json();
+                appendMessage('bot', `Stop result: ${JSON.stringify(data)}\nSystem will exit shortly.`);
+                setTimeout(() => { window.location.href = 'about:blank'; }, 1200);
+            } catch (error) {
+                appendMessage('bot', `Stop failed: ${error.message}`);
+                stopServicesBtn.disabled = false;
+                stopServicesBtn.innerHTML = '<i class="fas fa-power-off mr-2"></i> Stop All Services';
+            }
+        }
+
+        startServicesBtn.addEventListener('click', startServices);
+        stopServicesBtn.addEventListener('click', stopAllServices);
+        initMap();
+        if (loadSessions()) {
+            renderSessionList();
+            setActiveSession(activeSessionId || sessions[0]?.id || '');
+        } else {
+            createNewSession();
+        }
+        switchPage('chat');
+        refreshSystemStatus();
+        setInterval(refreshSystemStatus, 5000);
+    </script>
+</body>
+</html>
