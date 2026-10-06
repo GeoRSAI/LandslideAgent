@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from src.agent.controller import ToolCallContext, get_policy, format_rule_violations
 from src.agent.protocol import JsonRpcAgentServer, ToolRegistry, ToolSpec
-from src.models.llm_client import chat_with_tools
+from src.models.llm_client import chat_with_tools, llm_describe_scene
 from src.pipelines.stage1_llm_judge import run_stage1
 from src.pipelines.stage2_segmentation import run_stage2
 from src.pipelines.stage3_classification import run_stage3
@@ -18,6 +19,7 @@ from src.tools.crop_tool import crop_or_tile
 from src.tools.osm_tool import query_osm_nearby_safe
 from src.tools.geo_background_tool import query_geo_background_safe
 from src.tools.tiff_info_tool import read_tiff_info
+from src.utils.geometry import locate_primary_candidate
 
 
 def load_thresholds(path: str) -> dict[str, Any]:
@@ -63,6 +65,24 @@ def _region_count(value: Any) -> int:
     return sum(1 for item in regions if _looks_like_region_item(item))
 
 
+def _image_info_for_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """Accept either image_info.image_path or the public top-level image_path.
+
+    The contract layer supplies a full ``image_info`` block, but an agent running
+    without it can only reasonably pass a path. Both arms must reach the same
+    tool implementation, so the tool boundary accepts either form.
+    """
+    raw_info = args.get("image_info")
+    image_info = dict(raw_info) if isinstance(raw_info, dict) else {}
+    top_level_path = str(args.get("image_path", "") or "").strip()
+    nested_path = str(image_info.get("image_path", "") or "").strip()
+    if top_level_path and not nested_path:
+        image_info["image_path"] = top_level_path
+    if not str(image_info.get("image_path", "") or "").strip():
+        raise ValueError("missing image_path for image analysis tool")
+    return image_info
+
+
 def _resolve_image_info(
     args: dict[str, Any],
     outputs: dict[str, Any],
@@ -105,16 +125,7 @@ def _parse_second_pass_area_ratio_limit(raw: str) -> float | None:
 
 
 def _mandatory_seg_llm_review_area_ratio(limit: float | None) -> float:
-    if limit is None:
-        return 0.20
-    try:
-        value = float(limit)
-    except (TypeError, ValueError):
-        return 0.20
-    if value <= 0.0:
-        return 0.20
-    return value
-
+    return get_policy().tiny_area_review_threshold
 
 def _resolve_refinement_area_ratio(refinement: Any, segmentation: Any) -> float | None:
     for candidate in (refinement, segmentation):
@@ -146,19 +157,6 @@ def _extract_latest_user_image_path(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
-def _latest_user_has_image(messages: list[dict[str, Any]]) -> bool:
-    for msg in reversed(messages):
-        if msg.get("role") != "user":
-            continue
-        content = msg.get("content")
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "image":
-                    return True
-        return False
-    return False
-
-
 def _is_existing_file(path: str) -> bool:
     try:
         return bool(path) and Path(path).exists() and Path(path).is_file()
@@ -173,117 +171,40 @@ def _default_report_out_path(image_path: str | None = None) -> str:
 
 
 def _fuse_decision_argument_hint(missing: list[str]) -> str:
-    missing_text = ", ".join(missing) if missing else "unknown"
-    return (
-        "fuse.decision input is incomplete. "
-        f"Missing: {missing_text}. "
-        "Required top-level args: stage1, refinement, classification, geo_context. "
-        "Required fields: classification.class_name; "
-        "geo_context.background.terrain.slope_deg/aspect_deg; "
-        "geo_context.background.geology; "
-        "geo_context.nearby.count/features. "
-        "Build arguments by reusing tool outputs: "
-        "classification <- cls.run, "
-        "geo_context.background <- geo.background, "
-        "geo_context.nearby <- geo.nearby. "
-        "Then call fuse.decision again with explicit classification + geo_context. "
-        "Minimal argument template: "
-        "{\"classification\":{\"class_name\":\"<from cls.run>\",\"confidence\":0.0,\"topk\":[]},"
-        "\"geo_context\":{\"background\":{\"terrain\":{\"slope_deg\":0.0,\"aspect_deg\":0.0},\"geology\":{}},"
-        "\"nearby\":{\"count\":0,\"features\":[]}}}."
-    )
-
+    return get_policy().fusion_argument_hint(missing)
 
 def _fuse_decision_required_call_instruction() -> str:
-    return (
-        "Hard requirement for fuse.decision arguments: never call with empty arguments {}. "
-        "You must explicitly provide classification and geo_context. "
-        "Build arguments by reusing tool outputs exactly as: classification <- cls.run; "
-        "geo_context.background <- geo.background; geo_context.nearby <- geo.nearby. "
-        "Minimal argument template: "
-        "{\"classification\":{\"class_name\":\"<from cls.run>\",\"confidence\":0.0,\"topk\":[]},"
-        "\"geo_context\":{\"background\":{\"terrain\":{\"slope_deg\":0.0,\"aspect_deg\":0.0},\"geology\":{}},"
-        "\"nearby\":{\"count\":0,\"features\":[]}}}. "
-        "If fuse.decision returns input incomplete, immediately call fuse.decision again with corrected explicit arguments."
-    )
+    return get_policy().fusion_required_call_instruction()
 
+
+def _run_seg_llm_review(args: dict[str, Any], max_area_ratio: float) -> dict[str, Any]:
+    """Rebuild the boundary input when the model calls review too early."""
+    refinement = args.get("refinement") if isinstance(args.get("refinement"), dict) else {}
+    segmentation = args.get("segmentation") if isinstance(args.get("segmentation"), dict) else None
+    if not refinement.get("regions") and segmentation:
+        refinement = run_stage4(
+            [],
+            image_info=args.get("image_info"),
+            stage1=args.get("stage1"),
+            segmentation=segmentation,
+            run_llm_second_pass=False,
+            llm_second_pass_max_area_ratio=max_area_ratio,
+        )
+    result = run_stage4_llm_review(
+        refinement,
+        image_info=args.get("image_info"),
+        stage1=args.get("stage1"),
+        llm_second_pass_max_area_ratio=max_area_ratio,
+    )
+    if not result.get("llm_second_pass") and not result.get("llm_second_pass_skipped_for_large_area"):
+        result["error"] = "seg.llm_review produced no second-pass result"
+    return result
 
 def _seg_llm_review_required_call_instruction() -> str:
-    return (
-        "Hard requirement before fuse.decision for tiny-area cases: "
-        "if area_ratio is below 0.20, call seg.llm_review first, then call fuse.decision again. "
-        "Use arguments exactly as: refinement <- seg.refine; stage1 <- llm.first_pass; image_info <- tiff.info. "
-        "Then set llm_second_pass <- seg.llm_review.llm_second_pass when calling fuse.decision."
-    )
-
+    return get_policy().second_pass_required_instruction()
 
 def _fuse_retry_system_instruction_from_error(error_text: str) -> str | None:
-    text = str(error_text or "").strip()
-    lowered = text.lower()
-    if "fuse.decision" not in lowered:
-        return None
-    if (
-        "input is incomplete" in lowered
-        or "missing:" in lowered
-        or "requires" in lowered
-        or "classification" in lowered
-        or "geo_context" in lowered
-    ):
-        return _fuse_decision_required_call_instruction()
-    if "seg.llm_review" in lowered and ("mandatory" in lowered or "call seg.llm_review first" in lowered):
-        return _seg_llm_review_required_call_instruction()
-    return None
-
-
-def _validate_fuse_required_arguments(args: dict[str, Any]) -> None:
-    missing: list[str] = []
-    classification = args.get("classification")
-    if not isinstance(classification, dict):
-        missing.append("classification")
-        class_name = ""
-    else:
-        class_name = str(classification.get("class_name", "") or "").strip()
-        if not class_name:
-            missing.append("classification.class_name")
-
-    geo_context = args.get("geo_context")
-    if not isinstance(geo_context, dict):
-        missing.append("geo_context")
-        raise ValueError(_fuse_decision_argument_hint(missing))
-
-    background = geo_context.get("background")
-    nearby = geo_context.get("nearby")
-    if not isinstance(background, dict):
-        missing.append("geo_context.background")
-        terrain: Any = None
-        geology: Any = None
-    else:
-        terrain = background.get("terrain")
-        geology = background.get("geology")
-    if not isinstance(nearby, dict):
-        missing.append("geo_context.nearby")
-
-    if not isinstance(terrain, dict):
-        missing.append("geo_context.background.terrain")
-    if isinstance(terrain, dict) and "slope_deg" not in terrain:
-        missing.append("geo_context.background.terrain.slope_deg")
-    if isinstance(terrain, dict) and "aspect_deg" not in terrain:
-        missing.append("geo_context.background.terrain.aspect_deg")
-    if not isinstance(geology, dict):
-        missing.append("geo_context.background.geology")
-    elif not any(key in geology for key in ("lithology", "unit_name", "description", "age", "source")):
-        missing.append("geo_context.background.geology.(lithology|unit_name|description|age|source)")
-
-    if isinstance(nearby, dict) and "count" not in nearby:
-        missing.append("geo_context.nearby.count")
-    if isinstance(nearby, dict) and "features" not in nearby:
-        missing.append("geo_context.nearby.features")
-    if isinstance(nearby, dict) and "features" in nearby and not isinstance(nearby.get("features"), list):
-        missing.append("geo_context.nearby.features(list)")
-
-    if missing:
-        raise ValueError(_fuse_decision_argument_hint(missing))
-
+    return get_policy().retry_instruction_from_error(error_text)
 
 def _extract_last_tool_error(history: list[dict[str, Any]], tool_name: str) -> str:
     for msg in reversed(history):
@@ -308,18 +229,79 @@ def _extract_last_tool_error(history: list[dict[str, Any]], tool_name: str) -> s
     return ""
 
 
+def _fuse_lenient() -> bool:
+    """True on the free-arm container: fuse.decision has no required inputs."""
+    return os.getenv("FUSE_LENIENT", "0") in ("1", "true", "True")
+
+
+_LENIENT_FUSE_DESCRIPTION = (
+    "Signal that you have finished gathering evidence. Call it when you are ready for the "
+    "final report; no arguments are needed. It makes no decision itself: the analysis ends "
+    "and the final report is written from the tool results you have collected."
+)
+
+
+def _run_fuse_decision(args: dict[str, Any], policy: Any) -> dict[str, Any]:
+    """Execute fusion, reporting absent required inputs in actionable terms.
+
+    Presence check only: it names which declared input is missing or malformed
+    so the caller receives a usable observation instead of a bare KeyError. It
+    makes no judgement about whether the evidence is sufficient - that is a
+    domain rule and lives in the contract layer, not here.
+    """
+    if _fuse_lenient():
+        # Free arm (FUSE_LENIENT=1): fuse.decision is only the agent's signal that
+        # evidence gathering is finished. It makes no decision; the final report
+        # (and its verdict) is written from the tool results the agent collected.
+        return {
+            "report_requested": True,
+            "note": "Evidence gathering closed; the final report is written from the tool results collected so far.",
+        }
+    missing = [key for key in ("stage1", "refinement") if not isinstance(args.get(key), dict)]
+    if missing:
+        raise ValueError(
+            "fuse.decision needs `stage1` and `refinement` as objects; "
+            + ", ".join("`%s`" % key for key in missing)
+            + (" is" if len(missing) == 1 else " are")
+            + " absent or not an object."
+        )
+    refinement = args["refinement"]
+    return run_stage5(
+        stage1=args["stage1"],
+        refinement=refinement,
+        classification=args.get("classification"),
+        geo_context=args.get("geo_context"),
+        gate={"area_ratio": float(refinement.get("area_ratio", 0.0) or 0.0)},
+        segmentation=args.get("segmentation"),
+        llm_second_pass=args.get("llm_second_pass"),
+        unavailable_evidence=args.get("unavailable_evidence"),
+    )
+
+
+def _run_report_write(args: dict[str, Any]) -> dict[str, Any]:
+    """Persist a report, reporting absent required inputs in actionable terms."""
+    problems = []
+    if not isinstance(args.get("report"), dict):
+        problems.append("`report` is absent or not an object")
+    if not str(args.get("out_path", "") or "").strip():
+        problems.append("`out_path` is absent or empty")
+    if problems:
+        raise ValueError("report.write needs both inputs: " + "; ".join(problems) + ".")
+    return {"report_path": run_stage6(args["report"], str(args["out_path"]).strip())}
+
+
 def create_default_server(
     thresholds_path: str = "configs/thresholds.json",
     *,
     enable_seg_llm_second_pass: bool | None = None,
+    review_threshold: float | None = None,
 ) -> JsonRpcAgentServer:
     thresholds = load_thresholds(thresholds_path)
-    enable_report_write = os.getenv("AGENT_ENABLE_REPORT_WRITE", "0") in ("1", "true", "True")
+    policy = get_policy(thresholds_path)
+    enable_report_write = policy.require_report_write
     if enable_seg_llm_second_pass is None:
         enable_seg_llm_second_pass = os.getenv("SEG_ENABLE_LLM_SECOND_PASS", "0") in ("1", "true", "True")
-    seg_llm_second_pass_max_area_ratio = _parse_second_pass_area_ratio_limit(
-        os.getenv("SEG_LLM_SECOND_PASS_MAX_AREA_RATIO", "0.20")
-    )
+    seg_llm_second_pass_max_area_ratio = review_threshold if review_threshold is not None else policy.tiny_area_review_threshold
     registry = ToolRegistry()
 
     registry.register(
@@ -405,7 +387,7 @@ def create_default_server(
                 "required": [],
             },
         ),
-        lambda args: {"tiles": crop_or_tile(args["image_info"], int(args.get("tile_size", 512)))},
+        lambda args: {"tiles": crop_or_tile(_image_info_for_tool(args), int(args.get("tile_size", 512)))},
     )
 
     registry.register(
@@ -413,8 +395,7 @@ def create_default_server(
             name="llm.first_pass",
             description=(
                 "Whole-image first-pass landslide screening by VLM. "
-                "Returns has_landslide, assessment_label, scene_description, evidence. "
-                "Does not return numeric risk scores or confidence values."
+                "Returns has_landslide, score, assessment_label, scene_description, evidence."
             ),
             input_schema={
                 "type": "object",
@@ -425,7 +406,27 @@ def create_default_server(
                 "required": [],
             },
         ),
-        lambda args: run_stage1(args["image_info"]),
+        lambda args: run_stage1(_image_info_for_tool(args)),
+    )
+
+    registry.register(
+        ToolSpec(
+            name="vlm.describe",
+            description=(
+                "Whole-image landslide description by the fine-tuned vision-language model. Returns "
+                "fields: presence, type, position, morphology, material, movement, environment, "
+                "impact, reason, causation."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "image_info": {"type": "object"},
+                    "image_path": {"type": "string"},
+                },
+                "required": [],
+            },
+        ),
+        lambda args: llm_describe_scene(str(_image_info_for_tool(args).get("image_path", "") or "")),
     )
 
     registry.register(
@@ -444,7 +445,7 @@ def create_default_server(
                 "required": [],
             },
         ),
-        lambda args: run_stage2(args["image_info"]),
+        lambda args: run_stage2(_image_info_for_tool(args)),
     )
 
     registry.register(
@@ -463,7 +464,7 @@ def create_default_server(
                 "required": [],
             },
         ),
-        lambda args: run_stage3(args["image_info"]),
+        lambda args: run_stage3(_image_info_for_tool(args)),
     )
 
     registry.register(
@@ -471,7 +472,7 @@ def create_default_server(
             name="seg.refine",
             description=(
                 "Segmentation-guided refinement to derive candidate landslide regions from segmentation output and image context. "
-                "Returns regions[] (bbox/class_id/source/area_ratio without confidence scoring), area_ratio, optional overlay_path/mask_path."
+                "Returns regions[] (bbox/score/class_id), area_ratio, optional overlay_path/mask_path."
             ),
             input_schema={
                 "type": "object",
@@ -496,12 +497,33 @@ def create_default_server(
 
     registry.register(
         ToolSpec(
+            name="region.locate",
+            description=(
+                "Run AFTER seg.refine. Describe where the primary landslide candidate sits within "
+                "the image frame (3x3 grid: upper/middle/lower by left/center/right), with its "
+                "normalized centre and bbox. Descriptive only - it does not affect the landslide "
+                "decision. Takes the seg.refine output and optionally image_info for the frame size."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "refinement": {"type": "object"},
+                    "image_info": {"type": "object"},
+                    "image_path": {"type": "string"},
+                },
+                "required": [],
+            },
+        ),
+        lambda args: locate_primary_candidate(args.get("refinement"), args.get("image_info")),
+    )
+
+    registry.register(
+        ToolSpec(
             name="seg.llm_review",
             description=(
                 "Second-pass VLM review on the full image with segmentation-boundary overlay. "
                 "Used for verification or description enrichment after refinement. "
-                "Returns llm_second_pass (decision/support label/evidence) and review metadata. "
-                "Does not return numeric risk scores or confidence values."
+                "Returns llm_second_pass (decision/support score/evidence) and review metadata."
             ),
             input_schema={
                 "type": "object",
@@ -514,28 +536,24 @@ def create_default_server(
                 "required": [],
             },
         ),
-        lambda args: run_stage4_llm_review(
-            args.get("refinement"),
-            image_info=args.get("image_info"),
-            stage1=args.get("stage1"),
-            llm_second_pass_max_area_ratio=seg_llm_second_pass_max_area_ratio,
+        lambda args: _run_seg_llm_review(
+            args,
+            seg_llm_second_pass_max_area_ratio,
         ),
     )
 
     registry.register(
         ToolSpec(
             name="fuse.decision",
-            description=(
-                "Fuse multi-stage evidence into final decision/report fields. "
-                "Requires stage1 + refinement + explicit classification + explicit geo_context "
-                "(background terrain/geology and nearby facilities). "
-                "Do not call with empty arguments; always pass explicit classification and geo_context. "
-                "Minimal argument template: "
-                "{\"classification\":{\"class_name\":\"<from cls.run>\",\"confidence\":0.0,\"topk\":[]},"
-                "\"geo_context\":{\"background\":{\"terrain\":{\"slope_deg\":0.0,\"aspect_deg\":0.0},\"geology\":{}},"
-                "\"nearby\":{\"count\":0,\"features\":[]}}}. "
-                "Returns has_landslide, severity, summary, recommendations, final_description. "
-                "No calibrated overall confidence is returned; cls.run confidence remains reference-only."
+            description=_LENIENT_FUSE_DESCRIPTION if _fuse_lenient() else (
+                "Fuse multi-stage evidence into the final decision/report fields. "
+                "Call this with NO arguments once tiff.info, llm.first_pass, seg.run, "
+                "cls.run, geo.background and geo.nearby have run (plus seg.llm_review "
+                "when it was required): stage1, refinement, segmentation, classification "
+                "and geo_context are assembled automatically from those tool outputs. "
+                "Pass an argument only to override an auto-filled value - do not "
+                "hand-construct classification or geo_context. "
+                "Returns has_landslide, classification_confidence, severity, summary, recommendations, final_description."
             ),
             input_schema={
                 "type": "object",
@@ -583,20 +601,10 @@ def create_default_server(
                     },
                     "llm_second_pass": {"type": "object"},
                 },
-                "required": ["stage1", "refinement", "classification", "geo_context"],
+                "required": [],
             },
         ),
-        lambda args: run_stage5(
-            stage1=args["stage1"],
-            refinement=args["refinement"],
-            classification=args.get("classification"),
-            geo_context=args.get("geo_context"),
-            gate={"area_ratio": float(args["refinement"].get("area_ratio", 0.0) or 0.0)},
-            segmentation=args.get("segmentation"),
-            llm_second_pass=args.get("llm_second_pass"),
-            llm_second_pass_threshold=float(thresholds["llm_second_pass_threshold"]),
-            min_region_score=float(thresholds.get("min_region_score", 0.45)),
-        ),
+        lambda args: _run_fuse_decision(args, policy),
     )
 
     if enable_report_write:
@@ -605,9 +613,9 @@ def create_default_server(
                 name="report.write",
                 description=(
                     "Write the final report object to local disk as JSON. "
-                    "If report is omitted, reuse the latest fuse.decision output. "
-                    "If out_path is omitted, auto-write under outputs/reports/. "
-                    "Returns report_path."
+                    "Both report and out_path must be supplied to this tool; when the "
+                    "domain contract is active it resolves them from the evidence "
+                    "ledger before the call. Returns report_path."
                 ),
                 input_schema={
                     "type": "object",
@@ -618,48 +626,42 @@ def create_default_server(
                     "required": [],
                 },
             ),
-            lambda args: {"report_path": run_stage6(args["report"], args["out_path"])},
+            lambda args: _run_report_write(args),
         )
 
     def chat_handler(params: dict[str, Any]) -> dict[str, Any]:
         messages = params.get("messages", []) or []
         latitude = params.get("latitude")
         longitude = params.get("longitude")
+        nearby_radius = int(params.get("nearby_radius", 300) or 300)
         has_geo_inputs = latitude is not None and longitude is not None
         latest_user_image_path = _extract_latest_user_image_path(messages)
-        current_turn_has_image = _latest_user_has_image(messages)
-        report_write_required = enable_report_write and current_turn_has_image
+        report_write_required_for_request = enable_report_write and bool(
+            latest_user_image_path
+        )
+        finalization_instruction = (
+            "Before finishing, call fuse.decision and then report.write to write the final report JSON to local disk. "
+            if report_write_required_for_request
+            else "Before finishing, call fuse.decision to produce the final decision/report output. "
+        )
         if not messages or messages[0].get("role") != "system":
-            if current_turn_has_image:
-                system_content = "".join(
-                    [
-                        "You are a landslide analysis agent. ",
-                        "For image analysis, always complete this initial cross-check before final decision/report: ",
-                        "tiff.info, llm.first_pass, seg.run. ",
-                        "Intermediate tool usage is flexible and not fixed by a required sequence. ",
-                        "When landslide area ratio is very small (< 0.20), you must invoke seg.llm_review using the segmentation-boundary highlighted overlay image ",
-                        "to perform a second-pass verification and enrich the final narrative description. ",
-                        (
-                            "Before finishing, call fuse.decision and then report.write to write the final report JSON to local disk. "
-                            "After report.write succeeds, end the current assistant turn immediately without generating another assistant message in the same turn. "
-                            if report_write_required
-                            else "Before finishing, call fuse.decision to produce the final decision/report output. "
-                        ),
-                        "Final conclusions and reports must include landslide subtype reference, ",
-                        "terrain slope/aspect and geological background evidence, and nearby human-facility context. ",
-                        _fuse_decision_required_call_instruction(),
-                    ]
-                )
-            else:
-                system_content = (
-                    "This is a follow-up turn without a new image upload. "
-                    "Focus on answering questions about previous conclusions and evidence. "
-                    "Do not force a new analysis workflow unless the user explicitly asks to rerun tools."
-                )
             messages = [
                 {
                     "role": "system",
-                    "content": system_content,
+                    "content": "".join(
+                        [
+                            "You are a landslide analysis agent. ",
+                            "For image analysis, always complete this initial cross-check before final decision/report: ",
+                            "tiff.info, llm.first_pass, seg.run. ",
+                            "Intermediate tool usage is flexible and not fixed by a required sequence. ",
+                            "When landslide area ratio is very small (< 0.20), you must invoke seg.llm_review using the segmentation-boundary highlighted overlay image ",
+                            "to perform a second-pass verification and enrich the final narrative description. ",
+                            finalization_instruction,
+                            "Final conclusions and reports must include landslide subtype reference, ",
+                            "terrain slope/aspect and geological background evidence, and nearby human-facility context. ",
+                            _fuse_decision_required_call_instruction(),
+                        ]
+                    ),
                 }
             ] + messages
 
@@ -690,164 +692,32 @@ def create_default_server(
         }
 
         def guarded_tool_executor(name: str, raw_args: dict[str, Any]) -> dict[str, Any]:
-            args = dict(raw_args or {})
             outputs = tool_state["outputs"]
             call_counts = tool_state["call_counts"]
             current_calls = int(call_counts.get(name, 0))
 
-            if name == "tiff.info":
-                image_path = str(args.get("image_path", "") or "").strip()
-                if not _is_existing_file(image_path):
-                    if _is_existing_file(latest_user_image_path):
-                        args["image_path"] = latest_user_image_path
-                    elif image_path and Path(image_path).exists() and Path(image_path).is_dir():
-                        raise ValueError(f"tiff.info requires an image file path, got directory: {image_path}")
-                    else:
-                        raise ValueError(
-                            "tiff.info requires a valid image_path file; no usable image path was found in tool arguments or latest user image."
-                        )
-            elif name in ("geo.nearby", "geo.background"):
-                if ("lat" not in args or "lon" not in args) and has_geo_inputs:
-                    args["lat"] = float(latitude)
-                    args["lon"] = float(longitude)
-                    if name == "geo.nearby" and "radius" not in args:
-                        args["radius"] = 300
-                if "lat" not in args or "lon" not in args:
-                    raise ValueError("geo tools require lat and lon.")
-            elif name == "image.tile":
-                args["image_info"] = _resolve_image_info(args, outputs)
-            elif name in ("llm.first_pass", "seg.run"):
-                if "tiff.info" not in outputs:
-                    raise ValueError(f"{name} requires tiff.info first for initial cross-check.")
-                args["image_info"] = outputs["tiff.info"]
-            elif name == "cls.run":
-                args["image_info"] = _resolve_image_info(args, outputs)
-            elif name == "seg.refine":
-                if "image_info" not in args:
-                    args["image_info"] = _resolve_image_info(args, outputs)
-                if "segmentation" not in args and "seg.run" in outputs:
-                    args["segmentation"] = outputs["seg.run"]
-                if not isinstance(args.get("segmentation"), dict):
-                    raise ValueError("seg.refine requires segmentation output (call seg.run first).")
-                if "regions" in args and not all(_looks_like_region_item(d) for d in (args.get("regions") or [])):
-                    args.pop("regions", None)
-            elif name == "seg.llm_review":
-                if "refinement" not in args and "seg.refine" in outputs:
-                    args["refinement"] = outputs["seg.refine"]
-                if "refinement" not in args and "tiff.info" in outputs and "seg.run" in outputs:
-                    args["refinement"] = run_stage4(
-                        [],
-                        image_info=outputs["tiff.info"],
-                        stage1=outputs.get("llm.first_pass"),
-                        segmentation=outputs["seg.run"],
-                        run_llm_second_pass=False,
-                        llm_second_pass_max_area_ratio=seg_llm_second_pass_max_area_ratio,
-                    )
-                if "refinement" not in args:
-                    raise ValueError("seg.llm_review requires segmentation-guided refinement context.")
-                if "stage1" not in args and "llm.first_pass" in outputs:
-                    args["stage1"] = outputs["llm.first_pass"]
-                args["image_info"] = _resolve_image_info(args, outputs)
-            elif name == "fuse.decision":
-                if "llm.first_pass" not in outputs:
-                    raise ValueError(
-                        "fuse.decision prerequisite missing: llm.first_pass. "
-                        + _fuse_decision_argument_hint(["stage1", "classification", "geo_context"])
-                    )
-                if "seg.run" not in outputs:
-                    raise ValueError(
-                        "fuse.decision prerequisite missing: seg.run. "
-                        + _fuse_decision_argument_hint(["refinement/segmentation", "classification", "geo_context"])
-                    )
-                if "cls.run" not in outputs:
-                    raise ValueError(
-                        "fuse.decision prerequisite missing: cls.run. "
-                        + _fuse_decision_argument_hint(["classification", "classification.class_name"])
-                    )
-                if "geo.nearby" not in outputs:
-                    raise ValueError(
-                        "fuse.decision prerequisite missing: geo.nearby. "
-                        + _fuse_decision_argument_hint(["geo_context.nearby.count", "geo_context.nearby.features"])
-                    )
-                if "geo.background" not in outputs:
-                    raise ValueError(
-                        "fuse.decision prerequisite missing: geo.background. "
-                        + _fuse_decision_argument_hint(
-                            [
-                                "geo_context.background.terrain.slope_deg",
-                                "geo_context.background.terrain.aspect_deg",
-                                "geo_context.background.geology",
-                            ]
-                        )
-                    )
-                args["stage1"] = outputs["llm.first_pass"]
-                if "segmentation" not in args:
-                    args["segmentation"] = outputs["seg.run"]
-                if "refinement" not in args and "seg.refine" in outputs:
-                    args["refinement"] = outputs["seg.refine"]
-                if "refinement" not in args:
-                    args["refinement"] = run_stage4(
-                        [],
-                        image_info=outputs["tiff.info"] if isinstance(outputs.get("tiff.info"), dict) else None,
-                        stage1=outputs.get("llm.first_pass"),
-                        segmentation=args.get("segmentation"),
-                        run_llm_second_pass=False,
-                        llm_second_pass_max_area_ratio=seg_llm_second_pass_max_area_ratio,
-                    )
-                if "segmentation" not in args and isinstance(args.get("refinement"), dict):
-                    derived_seg = args["refinement"].get("segmentation")
-                    if isinstance(derived_seg, dict):
-                        args["segmentation"] = derived_seg
-                mandatory_review_threshold = _mandatory_seg_llm_review_area_ratio(seg_llm_second_pass_max_area_ratio)
-                refinement_area_ratio = _resolve_refinement_area_ratio(args.get("refinement"), args.get("segmentation"))
-                review_is_mandatory = (
-                    refinement_area_ratio is not None and refinement_area_ratio < mandatory_review_threshold
-                )
-                if review_is_mandatory:
-                    review_output = outputs.get("seg.llm_review")
-                    if not isinstance(review_output, dict):
-                        ratio_text = f"{refinement_area_ratio:.6f}" if refinement_area_ratio is not None else "unknown"
-                        raise ValueError(
-                            "fuse.decision prerequisite missing: seg.llm_review. "
-                            f"seg.llm_review is mandatory when area_ratio ({ratio_text}) is below {mandatory_review_threshold:.2f}. "
-                            "Call seg.llm_review first, then call fuse.decision again."
-                        )
-                    args["llm_second_pass"] = review_output.get("llm_second_pass")
-                elif "llm_second_pass" not in args and "seg.llm_review" in outputs:
-                    args["llm_second_pass"] = outputs["seg.llm_review"].get("llm_second_pass")
-                if "classification" not in args:
-                    args["classification"] = outputs["cls.run"]
-                if "geo_context" not in args:
-                    args["geo_context"] = {
-                        "background": outputs["geo.background"],
-                        "nearby": outputs["geo.nearby"],
-                    }
-                _validate_fuse_required_arguments(args)
-                if "refinement" in args and not _looks_like_refinement_result(args["refinement"]):
-                    if "seg.refine" in outputs and _looks_like_refinement_result(outputs["seg.refine"]):
-                        args["refinement"] = outputs["seg.refine"]
-                if "refinement" in args and not _looks_like_refinement_result(args["refinement"]):
-                    raise ValueError("fuse.decision requires segmentation-guided refinement output.")
-                if "stage1" not in args or "refinement" not in args:
-                    raise ValueError("fuse.decision requires stage1 and refinement outputs.")
-            elif name == "report.write":
-                if "report" not in args and "fuse.decision" not in outputs:
-                    raise ValueError("report.write requires fuse.decision first.")
-                if "report" not in args and isinstance(outputs.get("fuse.decision"), dict):
-                    args["report"] = outputs["fuse.decision"]
-                if "out_path" not in args or not str(args.get("out_path", "") or "").strip():
-                    fused_image_path = ""
-                    if isinstance(outputs.get("tiff.info"), dict):
-                        fused_image_path = str(outputs["tiff.info"].get("image_path", "") or "").strip()
-                    if not fused_image_path:
-                        fused_image_path = str(latest_user_image_path or "").strip()
-                    args["out_path"] = _default_report_out_path(fused_image_path)
-                if not isinstance(args.get("report"), dict):
-                    raise ValueError("report.write requires a report object; call fuse.decision first.")
-                if tool_state["report_written"] >= 1:
-                    raise ValueError("report.write should only be called once.")
+            # Hard-precondition + dependency-assembly layer: single implementation
+            # in LandslidePolicy, shared verbatim with the free-agent runtime.
+            ctx = ToolCallContext(
+                image_path=str(latest_user_image_path or ""),
+                latitude=float(latitude) if has_geo_inputs else None,
+                longitude=float(longitude) if has_geo_inputs else None,
+                nearby_radius=nearby_radius,
+                report_written=tool_state["report_written"] >= 1,
+                run_tool=registry.call_tool,
+                read_image_info=read_tiff_info,
+            )
+            args = policy.prepare_tool_call(name, raw_args, outputs, ctx)
 
             result = registry.call_tool(name, args)
+            if not isinstance(result, dict):
+                result = {"value": result}
+            # Keep external geo-service failures inside the tool protocol so
+            # the controller can retry or report degraded evidence instead of
+            # terminating the whole agent stream.
+            if name == "geo.background" and result.get("error"):
+                result.setdefault("warnings", []).append(str(result["error"]))
+                result["source_status"] = "degraded"
             outputs[name] = result
             call_counts[name] = current_calls + 1
             if name == "fuse.decision":
@@ -857,12 +727,17 @@ def create_default_server(
             return result
 
         tools = _as_openai_tools(registry)
+        if not report_write_required_for_request:
+            tools = [
+                tool
+                for tool in tools
+                if (tool.get("function") or {}).get("name") != "report.write"
+            ]
         result = chat_with_tools(
             messages,
             tools,
             guarded_tool_executor,
             max_turns=max_turns,
-            stop_after_tools={"report.write"} if report_write_required else None,
         )
         fuse_retry_retries = 0
         while (
@@ -883,29 +758,18 @@ def create_default_server(
                 tools,
                 guarded_tool_executor,
                 max_turns=max_turns,
-                stop_after_tools={"report.write"} if report_write_required else None,
             )
-        if report_write_required and tool_state["report_written"] < 1:
-            report_guard_retries = 0
-            while report_guard_retries < 2 and tool_state["report_written"] < 1:
-                report_guard_retries += 1
-                fuse_error_text = _extract_last_tool_error(list(result["history"]), "fuse.decision")
-                fuse_retry_instruction = _fuse_retry_system_instruction_from_error(fuse_error_text)
-                reminder_message = {
-                    "role": "system",
-                    "content": (
-                        "Do not finish yet. Mandatory finalization is incomplete: "
-                        "call fuse.decision if needed, then call report.write with a valid local out_path."
-                        + ((" " + fuse_retry_instruction) if fuse_retry_instruction else "")
-                    ),
-                }
-                result = chat_with_tools(
-                    list(result["history"]) + [reminder_message],
-                    tools,
-                    guarded_tool_executor,
-                    max_turns=max_turns,
-                    stop_after_tools={"report.write"},
-                )
+        if (
+            report_write_required_for_request
+            and tool_state["report_written"] < 1
+            and isinstance(tool_state["outputs"].get("fuse.decision"), dict)
+            and not tool_state["outputs"].get("fuse.decision", {}).get("error")
+        ):
+            # fuse.decision is terminal; persist report directly.
+            try:
+                guarded_tool_executor("report.write", {})
+            except Exception:
+                logging.exception("deterministic report.write after fuse.decision failed")
             if tool_state["report_written"] < 1:
                 return {
                     "message": {
@@ -914,6 +778,26 @@ def create_default_server(
                     },
                     "history": list(result["history"]),
                 }
+        # Critic is skipped after successful fusion.
+        critic_max_retries = 0 if (isinstance(tool_state["outputs"].get("fuse.decision"), dict) and not tool_state["outputs"].get("fuse.decision", {}).get("error")) else int(os.getenv("AGENT_CRITIC_MAX_RETRIES", "3") or "3")
+        critic_retries = 0
+        while critic_retries < critic_max_retries:
+            critic_violations = policy.verify_analysis(
+                tool_state["outputs"],
+                require_report_write=report_write_required_for_request,
+                geo_expected=has_geo_inputs,
+            )
+            if not critic_violations:
+                break
+            critic_retries += 1
+            result = chat_with_tools(
+                list(result["history"])
+                + [{"role": "system", "content": format_rule_violations(critic_violations)}],
+                tools,
+                guarded_tool_executor,
+                max_turns=max_turns,
+            )
+
         fuse_output = tool_state["outputs"].get("fuse.decision")
         structured_final = ""
         if isinstance(fuse_output, dict):

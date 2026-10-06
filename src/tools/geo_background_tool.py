@@ -206,6 +206,16 @@ def _opentopography_resolution_m(dem_type: str) -> float | None:
     return resolution_map.get(dem_type.upper())
 
 
+def _open_meteo_only() -> bool:
+    """GEO_DEM_PROVIDER=open-meteo: use the Open-Meteo (Copernicus GLO-90) DEM for
+    everything, so every run gets terrain from one source regardless of the
+    OpenTopography daily quota."""
+    return os.getenv("GEO_DEM_PROVIDER", "").strip().lower() in {"open-meteo", "openmeteo"}
+
+
+OPEN_METEO_DEM_LABEL = "open-meteo:copernicus-glo90"
+
+
 def _open_meteo_fallback_enabled() -> bool:
     raw = str(os.getenv("GEO_BACKGROUND_ENABLE_OPEN_METEO_FALLBACK", "1")).strip().lower()
     return raw not in {"0", "false", "no", "off"}
@@ -351,7 +361,7 @@ def _query_dem_opentopography_or_fallback(lat: float, lon: float) -> dict[str, A
     api_key = os.getenv("OPENTOPOGRAPHY_API_KEY", "").strip()
     timeout = float(os.getenv("GEO_BACKGROUND_TIMEOUT", "10"))
 
-    if api_key:
+    if api_key and not _open_meteo_only():
         try:
             ot_data = _query_opentopography_elevation(lat, lon, timeout=timeout)
             elev = ot_data.get("elevation_m")
@@ -375,7 +385,7 @@ def _query_dem_opentopography_or_fallback(lat: float, lon: float) -> dict[str, A
             if elev is not None:
                 return {
                     "elevation_m": elev,
-                    "dem_source": "open-meteo-fallback",
+                    "dem_source": OPEN_METEO_DEM_LABEL if _open_meteo_only() else "open-meteo-fallback",
                     "dem_resolution_m": 90.0,
                     "raw": {},
                     # Primary 30m DEM failure is suppressed when fallback succeeds.
@@ -435,7 +445,9 @@ def _estimate_slope_aspect(lat: float, lon: float, timeout: float = 10.0) -> dic
     dem_resolution_m: float | None = None
     elevations: list[float | None] = []
     warnings: list[str] = []
-    if os.getenv("OPENTOPOGRAPHY_API_KEY", "").strip():
+    if _open_meteo_only():
+        pass  # single-source mode: go straight to Open-Meteo below, no fallback warning
+    elif os.getenv("OPENTOPOGRAPHY_API_KEY", "").strip():
         sampled = _query_opentopography_elevations(points, timeout=timeout)
         elevations = sampled.get("elevations", [])
         dem_type = sampled.get("dem_type", _opentopography_dem_type())
@@ -457,7 +469,8 @@ def _estimate_slope_aspect(lat: float, lon: float, timeout: float = 10.0) -> dic
             fallback = _query_open_meteo_elevations(points, timeout=timeout)
             if len(fallback) == len(points) and all(v is not None for v in fallback[1:]):
                 elevations = fallback
-                dem_method = "central_difference_open_meteo_fallback"
+                dem_method = ("central_difference_open_meteo" if _open_meteo_only()
+                              else "central_difference_open_meteo_fallback")
                 dem_resolution_m = 90.0
             else:
                 if len(fallback) != len(points):

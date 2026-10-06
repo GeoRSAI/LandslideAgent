@@ -1,92 +1,39 @@
-# Python
+# Generated runtime artifacts
+outputs/
+logs/
 __pycache__/
-*.py[cod]
-*.pyo
-*$py.class
+*.pyc
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.hypothesis/
 .coverage
-.coverage.*
-htmlcov/
-.tox/
-.nox/
-cover/
-
-# Build / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-*.manifest
-*.spec
-
-# Environments
-.venv/
-venv/
-env/
+*.bak*
+*.orig*
+# Local image fixtures created during manual tests; keep the tracked symlink.
+data/*.png
+data/*.jpg
+data/*.jpeg
+!data/landslide_image.png
+# Local secrets and environment overrides
 .env
 .env.*
+!*.env.example
+
 !.env.example
-local_settings.py
-
-# Runtime artifacts
-logs/
-outputs/
-*.log
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Model weights and large artifacts
-*.pt
+models/*
+!models/.gitkeep
 *.pth
-*.pth.tar
-*.ckpt
-*.onnx
+*.pt
 *.safetensors
-*.bin
-*.pkl
-*.pickle
+*.egg-info/
+.venv/
+build/
+dist/
 
-# Data stores
-*.sqlite
-*.sqlite3
-db.sqlite3
-db.sqlite3-journal
-
-# Archives
-*.zip
-*.rar
-*.7z
-*.tar
-*.tar.gz
-
-# Notebook / IPython
-.ipynb_checkpoints/
-profile_default/
-ipython_config.py
-
-# OS / IDE
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# Docs
-site/
-docs/_build/
+# Publish only dual-head scripts/configuration, never checkpoint binaries.
+!models/landslide_qwen3vl_dual_head_continuous_10ep_best/
+models/landslide_qwen3vl_dual_head_continuous_10ep_best/**
+!models/landslide_qwen3vl_dual_head_continuous_10ep_best/*.py
+!models/landslide_qwen3vl_dual_head_continuous_10ep_best/*.json
+!models/landslide_qwen3vl_dual_head_continuous_10ep_best/*.md
+!models/landslide_qwen3vl_dual_head_continuous_10ep_best/adapter/
+!models/landslide_qwen3vl_dual_head_continuous_10ep_best/adapter/*.json
+!models/landslide_qwen3vl_dual_head_continuous_10ep_best/adapter/*.md

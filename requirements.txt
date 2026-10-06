@@ -10,3 +10,11 @@ uvicorn[standard]
 python-multipart
 
 # Note: Model-specific libs (torch, mmcv, ultralytics) should be installed via conda/pip separately in their envs
+
+# Standardized orchestration and validation
+langgraph>=0.6,<1.0
+pytest>=8,<9
+
+pillow
+pydantic>=2,<3
+httpx

@@ -6,14 +6,20 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 from PIL import Image
 from src.utils import build_artifact_path
 
 _MODEL = None
 _MODEL_BACKEND = ""
-DEFAULT_MMSEG_CONFIG_PATH = ""
-DEFAULT_MMSEG_CHECKPOINT_PATH = ""
+DEFAULT_MMSEG_CONFIG_PATH = (
+    "models/mmsegmentation-main/work_dirs/"
+    "segformer_mit-b2_1xb8-50e_landslide/"
+    "segformer_mit-b2_1xb8-50e_landslide-binary-512x512.py"
+)
+DEFAULT_MMSEG_CHECKPOINT_PATH = (
+    "models/mmsegmentation-main/work_dirs/"
+    "segformer_mit-b2_1xb8-50e_landslide/best_mIoU_epoch_28.pth"
+)
 
 
 def _truthy_env(name: str, default: str = "0") -> bool:
@@ -45,12 +51,19 @@ def _resolve_backend() -> str:
 
 
 def _load_legacy_model():
-    repo_path = os.getenv("DEEPLAB_REPO_PATH", "")
+    import torch
+    repo_path = os.getenv(
+        "DEEPLAB_REPO_PATH",
+        "models/deeplabv3+/deeplabv3-plus-pytorch-main",
+    )
     if repo_path not in sys.path:
         sys.path.insert(0, repo_path)
     from deeplab import DeeplabV3
 
-    model_path = os.getenv("DEEPLAB_MODEL_PATH", "")
+    model_path = os.getenv(
+        "DEEPLAB_MODEL_PATH",
+        "models/deeplabv3+/deeplabv3-plus-pytorch-main/logs/best_epoch_weights.pth",
+    )
     num_classes = int(os.getenv("DEEPLAB_NUM_CLASSES", "2"))
     backbone = os.getenv("DEEPLAB_BACKBONE", "mobilenet")
     input_shape_str = os.getenv("DEEPLAB_INPUT_SHAPE", "512,512")
@@ -74,9 +87,10 @@ def _load_mmseg_model():
         )
         or ""
     ).strip()
-    device = str(
-        os.getenv("MMSEG_DEVICE", "cuda:0" if torch.cuda.is_available() else "cpu") or "cpu"
-    ).strip()
+    device = os.getenv("MMSEG_DEVICE", "").strip()
+    if not device:
+        import torch
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
     if not config_path:
         raise RuntimeError(

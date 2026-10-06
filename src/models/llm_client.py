@@ -8,6 +8,11 @@ from contextlib import contextmanager
 from typing import Any, Callable
 from urllib import request, error
 
+from src.models import dual_head_client
+from src.utils.geometry import (
+    describe_primary_candidate_position as _describe_primary_candidate_position,
+)
+
 
 _MODEL_RAW_EVENT_SINK: contextvars.ContextVar[list[dict[str, str]] | None] = contextvars.ContextVar(
     "llm_client_model_raw_event_sink",
@@ -49,51 +54,6 @@ def _compact_text(text: str, max_chars: int = 96) -> str:
     return compact
 
 
-_INCOMPLETE_TAIL_PATTERNS = (
-    " a",
-    " an",
-    " the",
-    " of",
-    " to",
-    " near",
-    " near a",
-    " adjacent to",
-    " adjacent to a",
-    " with",
-    " by",
-    " in",
-    " on",
-    " at",
-    " from",
-)
-
-
-def _drop_incomplete_tail_sentence(text: str) -> str:
-    cleaned = _compact_text(text)
-    if not cleaned:
-        return ""
-    lowered = cleaned.rstrip(".!?").lower()
-    has_bad_short_tail = bool(
-        re.search(
-            r"\b(?:near|adjacent to|beside|next to|with|of|to|from|in|on|at|by|for)\s+(?:a|an|the)\s+[a-z]{1,3}$",
-            lowered,
-        )
-    )
-    if has_bad_short_tail or any(lowered.endswith(pattern) for pattern in _INCOMPLETE_TAIL_PATTERNS):
-        last_boundary = max(cleaned.rfind("."), cleaned.rfind("!"), cleaned.rfind("?"))
-        if last_boundary >= 0:
-            return cleaned[: last_boundary + 1].strip()
-        return ""
-    return cleaned
-
-
-def _looks_like_partial_json(text: str) -> bool:
-    stripped = str(text or "").lstrip()
-    if not stripped:
-        return False
-    return stripped.startswith("{") or stripped.startswith("[")
-
-
 def _parse_stage1_scene_assessment(text: str) -> tuple[str, str]:
     compact = _compact_text(text, max_chars=280)
     if not compact:
@@ -124,68 +84,9 @@ def _parse_stage1_scene_assessment(text: str) -> tuple[str, str]:
             label = "uncertain"
             scene_description = compact[len("uncertain"):].lstrip(" |:-") or compact
 
-    return label, _drop_incomplete_tail_sentence(scene_description)
+    return label, _compact_text(scene_description, max_chars=220)
 
 
-def _first_valid_bbox(refinement: dict[str, Any] | None) -> list[float] | None:
-    regions = (refinement or {}).get("regions", [])
-    if not isinstance(regions, list):
-        return None
-    for det in regions:
-        bbox = det.get("bbox") if isinstance(det, dict) else None
-        if isinstance(bbox, list) and len(bbox) == 4:
-            try:
-                return [float(v) for v in bbox]
-            except Exception:
-                return None
-    return None
-
-
-def _bbox_text(bbox: list[float] | None) -> str:
-    if not isinstance(bbox, list) or len(bbox) != 4:
-        return "not available"
-    return "[" + ", ".join(f"{float(v):.1f}" for v in bbox) + "]"
-
-
-def _estimate_frame_extent(refinement: dict[str, Any] | None) -> tuple[float, float]:
-    candidate_tiles = (refinement or {}).get("candidate_tiles", [])
-    if not isinstance(candidate_tiles, list):
-        return 0.0, 0.0
-    max_x = 0.0
-    max_y = 0.0
-    for tile in candidate_tiles:
-        if not isinstance(tile, dict):
-            continue
-        try:
-            tile_x = float(tile.get("x", 0.0) or 0.0)
-            tile_y = float(tile.get("y", 0.0) or 0.0)
-            tile_w = float(tile.get("w", 0.0) or 0.0)
-            tile_h = float(tile.get("h", 0.0) or 0.0)
-        except Exception:
-            continue
-        max_x = max(max_x, tile_x + max(0.0, tile_w))
-        max_y = max(max_y, tile_y + max(0.0, tile_h))
-    return max_x, max_y
-
-
-def _describe_primary_candidate_position(refinement: dict[str, Any] | None) -> str:
-    bbox = _first_valid_bbox(refinement)
-    if bbox is None:
-        return "No retained candidate region was available for precise frame-relative localization."
-
-    frame_w, frame_h = _estimate_frame_extent(refinement)
-    if frame_w <= 0.0 or frame_h <= 0.0:
-        return f"Primary candidate region bbox={_bbox_text(bbox)} pixels; normalized frame position is unavailable."
-
-    x1, y1, x2, y2 = bbox
-    cx = (x1 + x2) / 2.0
-    cy = (y1 + y2) / 2.0
-    rel_x = cx / frame_w
-    rel_y = cy / frame_h
-
-    horiz = "left" if rel_x < 0.33 else ("right" if rel_x > 0.67 else "center")
-    vert = "upper" if rel_y < 0.33 else ("lower" if rel_y > 0.67 else "middle")
-    return f"Primary candidate region lies in the {vert}-{horiz} part of the frame; bbox={_bbox_text(bbox)} pixels."
 
 
 def llm_judge_has_landslide(context: dict) -> dict:
@@ -204,7 +105,6 @@ def llm_judge_has_landslide(context: dict) -> dict:
                 "You are a landslide analysis expert reviewing the whole image. "
                 "Respond in English on one line using exactly one leading label: "
                 "Likely, Unlikely, or Uncertain. "
-                "Do not provide any numeric score, probability, or confidence value. "
                 "After the label, add ' | ' and then an information-dense whole-scene visual description with as much detail as needed. "
                 "Prioritize direct image observations over abstract judgement text. Describe slope condition, scarps, exposed material texture/color, debris/runout direction, vegetation or drainage disruption, and how the suspicious area is positioned relative to the broader scene."
             ),
@@ -212,35 +112,125 @@ def llm_judge_has_landslide(context: dict) -> dict:
         {"role": "user", "content": user_content},
     ]
     try:
-        response = _openai_chat_completion(
-            messages,
-            temperature=0.1,
-            max_tokens=256,
-            trace_label="tool.llm.first_pass",
-        )
-        content = _drop_incomplete_tail_sentence(response.get("content", ""))
+        response = _openai_chat_completion(messages, temperature=0.1, trace_label="tool.llm.first_pass")
+        content = _compact_text(response.get("content", ""), max_chars=220)
         label, scene_description = _parse_stage1_scene_assessment(content)
+        # assessment_label stays a text-parsed likely/unlikely/uncertain verdict --
+        # LandslidePolicy.should_run_second_pass gates on this string (e.g. an
+        # "uncertain" screening always forces a second pass) regardless of what
+        # has_landslide/score end up being below.
         if label == "likely":
             has_landslide = True
+            score = 0.8
         elif label == "unlikely":
             has_landslide = False
+            score = 0.2
         else:
             has_landslide = "yes" in content.lower() or (
                 "likely" in content.lower() and "unlikely" not in content.lower()
             )
-        return {
+            score = 0.5 if content else 0.0
+        score_source = "vlm_text_label"
+
+        classification: dict[str, Any] | None = None
+        if image_path:
+            # Real evidence source: the dual-head classifier's own softmax
+            # probability, replacing the hardcoded 0.8/0.2/0.5 above whenever
+            # it is available. stage1_is_positive() (controller.py) prefers
+            # has_landslide when it is a bool, so this takes priority there;
+            # assessment_label is untouched so the uncertain/error gate still
+            # works even when the classifier disagrees or is unavailable.
+            dual_head_result = dual_head_client.classify(image_path)
+            if int(dual_head_result.get("class_id", -1)) >= 0:
+                has_landslide = bool(dual_head_result["has_landslide"])
+                score = float(dual_head_result["score"])
+                score_source = "dual_head_classifier"
+                classification = {
+                    "class_id": dual_head_result["class_id"],
+                    "class_name": dual_head_result["class_name"],
+                    "confidence": dual_head_result["confidence"],
+                    "topk": dual_head_result.get("topk", []),
+                }
+
+        result = {
             "has_landslide": has_landslide,
+            "score": score,
+            "score_source": score_source,
             "evidence": content,
             "assessment_label": label,
             "scene_description": scene_description,
         }
+        if classification is not None:
+            result["classification"] = classification
+        return result
     except Exception as e:
         return {
             "has_landslide": False,
+            "score": 0.0,
             "evidence": f"LLM service error: {str(e)}",
             "assessment_label": "error",
             "scene_description": "",
         }
+
+
+# The exact instruction the description LoRA was fine-tuned on.
+DESCRIBE_PROMPT = (
+    "Please examine the remote sensing image and identify whether it contains a landslide. "
+    "If so, classify the landslide type and explain the visual evidence supporting your decision."
+)
+DESCRIBE_FIELDS = {
+    "landslide presence": "presence",
+    "landslide type": "type",
+    "image relative position within the image frame": "position",
+    "morphological characteristics": "morphology",
+    "material composition and surface cover": "material",
+    "movement and deformation features": "movement",
+    "surrounding environmental context": "environment",
+    "impact on human infrastructure": "impact",
+    "reason for landslide classification": "reason",
+    "landslide causation inference": "causation",
+}
+
+
+def parse_scene_description(text: str) -> dict[str, str]:
+    """Split the fine-tuned 10-field answer into its fields ("Label:" then value)."""
+    fields: dict[str, str] = {}
+    current = None
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        label, sep, rest = stripped.partition(":")
+        key = DESCRIBE_FIELDS.get(label.strip().lower()) if sep else None
+        if key:
+            current = key
+            fields[key] = rest.strip()
+        elif current:
+            fields[current] = (fields[current] + " " + stripped).strip()
+    return fields
+
+
+def llm_describe_scene(image_path: str) -> dict[str, Any]:
+    """Whole-image description using the dual-head adapter."""
+    if not str(image_path or "").strip():
+        return {"error": "vlm.describe needs an image_path"}
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "image", "image_path": image_path},
+            {"type": "text", "text": DESCRIBE_PROMPT},
+        ],
+    }]
+    response = _openai_chat_completion(
+        messages, temperature=0.0, trace_label="tool.vlm.describe", timeout=180.0, max_tokens=768,
+    )
+    text = str(response.get("content", "") or "")
+    if text.startswith("Error connecting to LLM service"):
+        return {"error": text}
+    fields = parse_scene_description(text)
+    if len(fields) < 3:
+        return {"error": "description did not follow the expected field format", "raw_text": text}
+    return {"fields": fields, "raw_text": text, "adapter": os.getenv("LLM_DESCRIBE_ADAPTER", "dualhead")}
 
 
 def llm_second_pass_on_boxed_image(review: dict[str, Any] | None) -> dict:
@@ -259,12 +249,13 @@ def llm_second_pass_on_boxed_image(review: dict[str, Any] | None) -> dict:
         or "mask" in overlay_source
         or review_mode.startswith("seg_")
     )
-    stage1_scene_description = _drop_incomplete_tail_sentence(str(review.get("stage1_scene_description", "") or ""))
+    stage1_scene_description = _compact_text(str(review.get("stage1_scene_description", "") or ""), max_chars=220)
     regions = review.get("regions", []) if isinstance(review.get("regions"), list) else []
     reviewed_regions = len(regions)
     region_summary = [
         {
             "bbox": det.get("bbox"),
+            "score": float(det.get("score", 0.0) or 0.0),
             "class_id": int(det.get("class_id", 0) or 0),
         }
         for det in regions[:6]
@@ -281,6 +272,7 @@ def llm_second_pass_on_boxed_image(review: dict[str, Any] | None) -> dict:
             "reviewed_regions": reviewed_regions,
             "decision": "unavailable",
             "supports_landslide": None,
+            "score": 0.0,
             "evidence": "Second-pass review could not run because no whole-image overlay was available.",
         }
 
@@ -310,20 +302,14 @@ def llm_second_pass_on_boxed_image(review: dict[str, Any] | None) -> dict:
                     "This review is only for narrative enrichment and spatial localization, not for another yes/no decision. "
                     "Respond in English on one line. "
                     "Start with exactly one label: Describe. "
-                    "Do not provide any numeric score, probability, or confidence value. "
                     "Then add ' | ' and a detailed scene-grounded explanation with as much detail as needed. Prioritize image morphology and spatial anchors: where the boxed region sits in the frame, how it relates to slope breaks/runout paths, and which visible cues support that reading."
                 ),
             },
             {"role": "user", "content": user_content},
         ]
         try:
-            response = _openai_chat_completion(
-                messages,
-                temperature=0.1,
-                max_tokens=320,
-                trace_label="tool.seg.llm_review",
-            )
-            content = _drop_incomplete_tail_sentence(response.get("content", ""))
+            response = _openai_chat_completion(messages, temperature=0.1, trace_label="tool.seg.llm_review")
+            content = _compact_text(response.get("content", ""), max_chars=280)
             return {
                 "review_mode": review_mode,
                 "review_purpose": review_purpose,
@@ -332,6 +318,7 @@ def llm_second_pass_on_boxed_image(review: dict[str, Any] | None) -> dict:
                 "reviewed_regions": reviewed_regions,
                 "decision": "descriptive",
                 "supports_landslide": None,
+                "score": 0.5,
                 "evidence": content,
             }
         except Exception as e:
@@ -343,6 +330,7 @@ def llm_second_pass_on_boxed_image(review: dict[str, Any] | None) -> dict:
                 "reviewed_regions": reviewed_regions,
                 "decision": "error",
                 "supports_landslide": None,
+                "score": 0.0,
                 "evidence": f"LLM service error: {str(e)}",
             }
 
@@ -368,29 +356,26 @@ def llm_second_pass_on_boxed_image(review: dict[str, Any] | None) -> dict:
                 f"The {marker_name} indicate suspected landslide location(s) within the same scene that was first judged from the original image. "
                 "Respond in English on one line. "
                 "Start with exactly one label: Support, NotSupport, or Uncertain. "
-                "Do not provide any numeric score, probability, or confidence value. "
                 "Then add ' | ' and a scene-grounded explanation with as much detail as needed. Prioritize direct visual evidence: frame-relative position, slope morphology, material/texture contrast, runout continuity, and what the boxed whole-image review confirms, weakens, or leaves uncertain."
             ),
         },
         {"role": "user", "content": user_content},
     ]
     try:
-        response = _openai_chat_completion(
-            messages,
-            temperature=0.1,
-            max_tokens=320,
-            trace_label="tool.seg.llm_review",
-        )
-        content = _drop_incomplete_tail_sentence(response.get("content", ""))
+        response = _openai_chat_completion(messages, temperature=0.1, trace_label="tool.seg.llm_review")
+        content = _compact_text(response.get("content", ""), max_chars=280)
         verdict = content.lower()
         if verdict.startswith("support"):
             decision = "positive"
+            score = 0.78
             supports_landslide: bool | None = True
         elif verdict.startswith("notsupport") or verdict.startswith("not support"):
             decision = "negative"
+            score = 0.28
             supports_landslide = False
         else:
             decision = "uncertain"
+            score = 0.5
             supports_landslide = None
         return {
             "review_mode": review_mode,
@@ -400,6 +385,7 @@ def llm_second_pass_on_boxed_image(review: dict[str, Any] | None) -> dict:
             "reviewed_regions": reviewed_regions,
             "decision": decision,
             "supports_landslide": supports_landslide,
+            "score": score,
             "evidence": content,
         }
     except Exception as e:
@@ -411,6 +397,7 @@ def llm_second_pass_on_boxed_image(review: dict[str, Any] | None) -> dict:
             "reviewed_regions": reviewed_regions,
             "decision": "error",
             "supports_landslide": None,
+            "score": 0.0,
             "evidence": f"LLM service error: {str(e)}",
         }
 
@@ -425,8 +412,10 @@ def llm_generate_final_report(
     gate: dict | None = None,
     llm_second_pass: dict | None = None,
     fused_decision: dict[str, Any] | None = None,
+    unavailable_evidence: list | None = None,
 ) -> dict:
     payload = {
+        "unavailable_evidence": unavailable_evidence or [],
         "stage1": stage1,
         "refinement": refinement,
         "segmentation": segmentation,
@@ -434,7 +423,12 @@ def llm_generate_final_report(
         "geo_context": geo_context,
         "gate": gate,
         "llm_second_pass": llm_second_pass,
-        "final_decision": fused_decision,
+        # Severity is not an image-grounded hazard assessment. Keep the
+        # internal fusion value out of the narrative-model context.
+        "final_decision": {
+            key: value for key, value in (fused_decision or {}).items()
+            if key != "severity"
+        },
     }
 
     def _parse_json_object(text: str) -> dict[str, Any] | None:
@@ -456,22 +450,20 @@ def llm_generate_final_report(
             return None
 
     def _stage1_scene_description() -> str:
-        explicit = _drop_incomplete_tail_sentence(str((stage1 or {}).get("scene_description", "") or ""))
+        explicit = _compact_text(str((stage1 or {}).get("scene_description", "") or ""), max_chars=220)
         if explicit:
             return explicit
         _, parsed = _parse_stage1_scene_assessment(str((stage1 or {}).get("evidence", "") or ""))
         if parsed:
             return parsed
-        return (
-            _drop_incomplete_tail_sentence(
-                str((stage1 or {}).get("evidence", "") or "No whole-image scene description available.")
-            )
-            or "No whole-image scene description available."
+        return _compact_text(
+            str((stage1 or {}).get("evidence", "") or "No whole-image scene description available."),
+            max_chars=220,
         )
 
     def _second_pass_default_note() -> str:
         review = llm_second_pass if isinstance(llm_second_pass, dict) else {}
-        evidence = _drop_incomplete_tail_sentence(str(review.get("evidence", "") or ""))
+        evidence = _compact_text(str(review.get("evidence", "") or ""), max_chars=220)
         decision = str(review.get("decision", "") or "").lower()
         review_purpose = " ".join(str(review.get("review_purpose", "") or "").strip().lower().split())
         reviewed_regions = int(review.get("reviewed_regions", 0) or 0)
@@ -488,7 +480,7 @@ def llm_generate_final_report(
                 prefix = "A second-pass region-overlay whole-image review was available"
             if reviewed_regions > 0:
                 prefix += f" after examining {reviewed_regions} highlighted candidate region(s) that marked suspected landslide location(s)"
-            return _drop_incomplete_tail_sentence(f"{prefix}. {evidence}")
+            return _compact_text(f"{prefix}. {evidence}", max_chars=260)
         return "No second-pass region-overlay whole-image review was used; the report relies on the original-image reading plus tool outputs."
 
     def _classification_reference_default() -> str:
@@ -555,24 +547,13 @@ def llm_generate_final_report(
         cls_name = str((classification or {}).get("class_name", "") or "").strip()
         cls_conf = float((classification or {}).get("confidence", 0.0) or 0.0)
         geo_count = int((geo_context or {}).get("count", 0) or 0)
+        # The verdict and confidence come from the single fusion rule
+        # (LandslidePolicy.fuse_decision) - this narrative layer never re-derives
+        # them. confidence is a real model score or None (never synthesised).
         decision = fused_decision if isinstance(fused_decision, dict) else {}
-
-        has_landslide_value = decision.get("has_landslide")
-        if has_landslide_value is None:
-            has_landslide = bool(stage1_has or region_count > 0 or seg_ratio >= 0.01)
-        else:
-            has_landslide = bool(has_landslide_value)
-
-        severity = str(decision.get("severity", "") or "").lower()
-        if severity not in {"none", "low", "medium", "high"}:
-            severity = "none"
-            if has_landslide:
-                if seg_ratio >= 0.15:
-                    severity = "high"
-                elif seg_ratio >= 0.05:
-                    severity = "medium"
-                else:
-                    severity = "low"
+        has_landslide = bool(decision.get("has_landslide", False))
+        _conf = decision.get("confidence")
+        confidence = float(_conf) if isinstance(_conf, (int, float)) else None
 
         scene_description = _stage1_scene_description()
         if summary_text:
@@ -589,26 +570,25 @@ def llm_generate_final_report(
             )
 
         recommendation = "Routine monitoring."
-        if has_landslide and severity in ("medium", "high"):
-            recommendation = "Manual review and field verification recommended."
-        elif has_landslide:
+        if has_landslide:
             recommendation = "Manual review is recommended if the site is operationally sensitive."
 
         report = {
             "report_version": "1.0",
             "summary": summary,
             "has_landslide": has_landslide,
-            "confidence": None,
-            "confidence_source": "not_computed",
-            "severity": severity,
+            "classification_confidence": round(cls_conf, 4) if cls_name else None,
             "landslide_type": cls_name if has_landslide and cls_name else "unknown",
+            # Independent visual opinion from the narrative model. The fusion
+            # layer reconciles this against the image classifier later.
+            "llm_landslide_type": "",
             "key_metrics": {
                 "regions_count": region_count,
                 "seg_area_ratio": round(seg_ratio, 6),
                 "landslide_pixels": seg_pixels,
             },
             "evidence": {
-                "stage1": _drop_incomplete_tail_sentence((stage1 or {}).get("evidence", "")),
+                "stage1": _compact_text((stage1 or {}).get("evidence", ""), 180),
                 "classification": _compact_text(
                     f"{cls_name} ({cls_conf:.3f})" if cls_name else "",
                     120,
@@ -651,19 +631,24 @@ def llm_generate_final_report(
             "role": "system",
             "content": (
                 "You are a geospatial landslide analyst writing the English narrative portion of a final report. "
-                "The final decision, severity, and numeric tool metrics are already computed in final_decision and must not be overturned. "
-                "No calibrated overall confidence score is produced for the final yes/no decision. "
-                "Do not invent or add any risk score, probability, or confidence value; only the classifier subtype confidence may be mentioned as reference evidence. "
+                "The final decision and numeric metrics are already computed in final_decision and must not be overturned. "
                 "If final_decision.has_landslide is false, explain that screening triggered further analysis but corroboration remained insufficient. "
                 "If final_decision.has_landslide is true, explain the corroborated evidence without overstating certainty. "
+                "Do not assign, imply, or discuss low/medium/high severity, hazard, risk, impact magnitude, or urgency: the available image evidence does not support those assessments. "
                 "Return only one JSON object with no markdown and no extra commentary. "
                 "Required fields: "
                 + ", ".join(requested_fields)
                 + ". "
                 "Optional fields you may also include when useful: spatial_distribution, classification_reference_note, second_pass_note. "
-                "The required field final_description must be a complete standalone report using exactly these section headings in this order: Final Decision Report; Conclusion; Evidence Summary; Image and Spatial Interpretation; Landslide Typology (Reference Only); Geographic and Exposure Context; Reliability and Uncertainty; Final Determination. "
+                "You do not see the image: do not propose, rank, or change the landslide subtype yourself. The subtype and its cross-classifier consistency come only from the classification tool output (classification.class_name, classification.resolution, classification.sources). "
+                "In segmentation/refinement outputs, regions[].class_id and tile_id are region indices, not landslide classes; never read them as a landslide type. "
+                "unavailable_evidence lists evidence that could not be obtained (and any tool output with evidence_unavailable=true): state explicitly that it was not available and why, and never describe, estimate or infer its content. "
+                "The required field final_description must be a complete standalone report using exactly these section headings in this order: Final Decision Report; Conclusion; Evidence Summary; Spatial Distribution; Image Feature Description; Landslide Typology (Reference Only); Rationale for Landslide Presence; Image Quality Assessment; Relative Position Within Image Frame; Environmental Impact; Confidence Level; Uncertainty Analysis; Causal Inference; Geographic Context; Final Determination. "
                 "Each sentence in final_description must be complete natural prose with no dangling fragments. "
                 "Keep the writing faithful to the provided tool outputs, avoid boilerplate, and avoid repeating raw numbers unless they materially improve interpretation. "
+                "Every report must visibly separate fact from interpretation: prefix direct image observations and explicit tool-returned measurements with 'Observed:', and prefix logical, causal, predictive, or cross-stage reasoning with 'Inference:'. "
+                "Inside final_description, use these labels in the relevant paragraphs and include explicit 'Observed evidence:' and 'Logical inference:' labels in the Evidence Summary when both are present. "
+                "Never rewrite an inference as an observation; use 'Not observed' or 'Not available' for missing evidence. Keep recommendations and causal explanations under Inference, while image morphology and tool measurements stay under Observed. "
                 "Image-grounded description is the highest priority in this task. In summary/visual_description/tool_interpretation, allocate at least half of the narrative to concrete scene observations (terrain shape, scarp edges, exposed material, runout traces, vegetation/drainage disruption, and frame-relative layout) before decision-level interpretation. Write visual_description as a rich multi-sentence whole-scene account rather than a short phrase. Prefer detailed whole-scene narration with concrete morphology and layout cues when evidence allows. Each string field should be natural prose, and recommendations may include as many items as needed."
             ),
         },
@@ -676,11 +661,13 @@ def llm_generate_final_report(
         },
     ]
     try:
+        _report_budget = int(os.getenv("LLM_REPORT_MAX_TOKENS", "3500") or "3500")
         response = _openai_chat_completion(
             messages,
             temperature=0.1,
-            max_tokens=1536,
             trace_label="tool.fuse.decision.report",
+            max_tokens=_report_budget,
+            timeout=180.0,
         )
         content = _compact_text(response.get("content", ""), max_chars=4000)
         parsed = _parse_json_object(content)
@@ -693,6 +680,7 @@ def llm_generate_final_report(
             base["visual_description"] = _compact_text(str(base.get("visual_description", "")), 900)
             base["spatial_distribution"] = _compact_text(str(base.get("spatial_distribution", "")), 520)
             base["tool_interpretation"] = _compact_text(str(base.get("tool_interpretation", "")), 420)
+            base["llm_landslide_type"] = _compact_text(str(base.get("llm_landslide_type", "")), 120)
             base["classification_reference_note"] = _compact_text(str(base.get("classification_reference_note", "")), 280)
             base["second_pass_note"] = _compact_text(str(base.get("second_pass_note", "")), 280)
             recs = base.get("recommendations")
@@ -708,7 +696,7 @@ def llm_generate_final_report(
             base["report_source"] = "llm_narrative"
             base["final_description"] = final_description
             return base
-        if content and not _looks_like_partial_json(content):
+        if content:
             return _build_default_report(content, "llm_text_fallback")
     except Exception:
         pass
@@ -722,11 +710,9 @@ def chat_with_tools(
     *,
     max_turns: int | None = None,
     temperature: float = 0.2,
-    stop_after_tools: set[str] | None = None,
 ) -> dict[str, Any]:
     history = list(messages)
     turns = 0
-    terminal_tools = stop_after_tools or set()
     while True:
         if isinstance(max_turns, int) and max_turns > 0 and turns >= max_turns:
             return {
@@ -770,16 +756,11 @@ def chat_with_tools(
                     "content": json.dumps(result, ensure_ascii=False),
                 }
             )
-            if name in terminal_tools and isinstance(result, dict) and "error" not in result:
-                return {
-                    "message": {
-                        "role": "assistant",
-                        "content": "Terminal tool completed.",
-                    },
-                    "history": history,
-                    "terminal_tool": name,
-                    "terminal_tool_result": result,
-                }
+            # fuse.decision is the authoritative terminal result. Do not send
+            # it back to the LLM for an unnecessary review/planning turn, and
+            # ignore any calls that were emitted after fusion in the same batch.
+            if name == "fuse.decision" and isinstance(result, dict) and not result.get("error"):
+                return {"message": assistant_msg, "history": history}
 
 
 def _openai_chat_completion(
@@ -788,9 +769,9 @@ def _openai_chat_completion(
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str = "auto",
     temperature: float = 0.2,
-    max_tokens: int | None = None,
     timeout: float = 60.0,
     trace_label: str | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     mock_mode = os.getenv("LLM_MOCK", "0") in ("1", "true", "True")
     if mock_mode and not tools:
@@ -809,6 +790,15 @@ def _openai_chat_completion(
         "messages": messages,
         "temperature": temperature,
     }
+    # Keep planner/report generation on the base model by default. A dedicated
+    # visual-evidence pass can opt into the dual-head adapter without making
+    # its classification-oriented LoRA affect tool arguments or later prose.
+    if trace_label == "tool.llm.first_pass":
+        payload["adapter_mode"] = os.getenv("LLM_FIRST_PASS_ADAPTER", "dualhead")
+    elif trace_label == "tool.seg.llm_review":
+        payload["adapter_mode"] = os.getenv("LLM_VISUAL_EVIDENCE_ADAPTER", "base")
+    elif trace_label == "tool.vlm.describe":
+        payload["adapter_mode"] = os.getenv("LLM_DESCRIBE_ADAPTER", "dualhead")
     if max_tokens is not None and int(max_tokens) > 0:
         payload["max_tokens"] = int(max_tokens)
     if tools:

@@ -142,13 +142,14 @@ def _mask_bbox_regions(binary_mask: np.ndarray, area_ratio: float) -> list[dict]
     y1 = float(ys.min())
     x2 = float(xs.max() + 1)
     y2 = float(ys.max() + 1)
+    score = max(0.55, min(0.98, 0.55 + float(area_ratio) * 2.0))
     return [
         {
             "tile_id": 0,
             "bbox": [x1, y1, x2, y2],
+            "score": score,
             "class_id": 0,
             "source": "segmentation_mask",
-            "area_ratio": float(area_ratio),
         }
     ]
 
@@ -227,11 +228,10 @@ def _normalize_external_regions(raw: object) -> list[dict] | None:
                 {
                     "tile_id": int(item.get("tile_id", 0) or 0),
                     "bbox": [float(v) for v in bbox],
+                    "score": float(item.get("score", 0.0) or 0.0),
                     "class_id": int(item.get("class_id", 0) or 0),
                 }
             )
-            if "score" in item:
-                normalized[-1]["legacy_score_ignored"] = True
         except Exception:
             continue
     if not normalized:
@@ -262,11 +262,10 @@ def _build_boundary_review_input(
             {
                 "tile_id": int(region.get("tile_id", 0) or 0),
                 "bbox": [float(v) for v in bbox],
+                "score": float(region.get("score", 0.0) or 0.0),
                 "class_id": int(region.get("class_id", 0) or 0),
             }
         )
-        if "score" in region:
-            normalized_regions[-1]["legacy_score_ignored"] = True
     if not normalized_regions:
         return {}
     return {
@@ -416,7 +415,14 @@ def run_stage4(
         stage1=stage1,
         regions=selected_regions,
     )
-    skip_for_large_area = bool(max_area_ratio is not None and area_ratio > max_area_ratio)
+    # A manually supplied candidate box is not a measured segmentation area.
+    # Only a real segmentation result should activate this skip gate.
+    has_measured_segmentation_ratio = external_regions is None and isinstance(segmentation, dict) and "area_ratio" in segmentation
+    skip_for_large_area = bool(
+        max_area_ratio is not None
+        and has_measured_segmentation_ratio
+        and area_ratio > max_area_ratio
+    )
     llm2 = (
         llm_second_pass_on_boxed_image(review_input)
         if run_llm_second_pass and review_input and (not skip_for_large_area)

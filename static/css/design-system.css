@@ -1,0 +1,335 @@
+/*
+ * daisyUI integration layer
+ * The component primitives come from daisyUI; this file only maps the
+ * existing research-console layout to those primitives.
+ */
+
+:root {
+    --ds-ink: #173b46;
+    --ds-ink-soft: #486a68;
+    --ds-line: #c6dcd5;
+    --ds-line-soft: #deebe7;
+    --ds-primary: #2d7b78;
+    --ds-primary-deep: #1d5c60;
+    --ds-mint: #dff1eb;
+    --ds-paper: #edf4f1;
+    --ds-panel: rgba(255, 255, 255, 0.92);
+}
+
+html,
+body {
+    min-width: 0;
+}
+
+body.academic-mode {
+    color: var(--ds-ink);
+    background-color: var(--ds-paper);
+    background-image:
+        linear-gradient(rgba(23, 59, 70, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(23, 59, 70, 0.025) 1px, transparent 1px),
+        radial-gradient(900px 520px at 82% -12%, rgba(82, 164, 151, 0.18), transparent 68%);
+    background-size: 32px 32px, 32px 32px, auto;
+}
+
+main {
+    min-width: 0;
+}
+
+.sidebar-shell {
+    background: linear-gradient(180deg, #153d48 0%, #1b4b53 48%, #12343e 100%) !important;
+    border-right: 0 !important;
+    box-shadow: 12px 0 34px -26px rgba(6, 30, 37, 0.7) !important;
+}
+
+.sidebar-head {
+    border-bottom-color: rgba(191, 225, 213, 0.16) !important;
+}
+
+.sidebar-bottom-nav.menu {
+    background: transparent;
+}
+
+.sidebar-item {
+    border-radius: 12px !important;
+}
+
+.sidebar-action-btn.btn {
+    border: 0 !important;
+    border-radius: 12px !important;
+    background: #83c6b4 !important;
+    color: #123842 !important;
+    box-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.72) !important;
+}
+
+.sidebar-action-btn.btn:hover {
+    background: #a3d9c9 !important;
+    color: #123842 !important;
+}
+
+.topbar-shell {
+    background: rgba(248, 252, 250, 0.9) !important;
+    border-bottom: 1px solid var(--ds-line) !important;
+    box-shadow: 0 8px 24px -22px rgba(23, 59, 70, 0.55) !important;
+}
+
+.hero-badge.badge {
+    height: auto;
+    min-height: 28px;
+    border-color: #c6e4da !important;
+    border-radius: 999px !important;
+    background: #eff9f5 !important;
+    color: #28656a !important;
+    white-space: normal;
+}
+
+.top-status-inline {
+    border-color: var(--ds-line) !important;
+    background: rgba(233, 244, 240, 0.88) !important;
+}
+
+.status-pill.badge {
+    min-height: 22px;
+    border-radius: 999px !important;
+    font-family: var(--font-mono);
+    letter-spacing: 0.02em;
+}
+
+.status-pill.badge-success {
+    border-color: #b7dfd1 !important;
+    background: #e6f6ef !important;
+    color: #23705f !important;
+}
+
+.status-pill.badge-error {
+    border-color: #efcaca !important;
+    background: #fff0f0 !important;
+    color: #a44e50 !important;
+}
+
+#action-buttons .btn,
+#composer-shell .btn,
+#page-token .btn {
+    min-height: 36px;
+    border-radius: 11px !important;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+}
+
+#action-buttons .btn-primary,
+#composer-shell .btn-primary {
+    border-color: var(--ds-primary-deep) !important;
+    background: linear-gradient(180deg, #3d9189 0%, var(--ds-primary) 100%) !important;
+    color: #ffffff !important;
+    box-shadow: 0 8px 18px -13px rgba(29, 92, 96, 0.9) !important;
+}
+
+#action-buttons .btn-primary:hover,
+#composer-shell .btn-primary:hover {
+    background: linear-gradient(180deg, #4b9e96 0%, #246d70 100%) !important;
+    transform: translateY(-1px);
+}
+
+#page-chat,
+#page-tools,
+#page-token {
+    min-width: 0;
+}
+
+#page-chat > section.soft-card.card {
+    border: 1px solid rgba(190, 215, 208, 0.9) !important;
+    border-radius: 20px !important;
+    background: var(--ds-panel) !important;
+    box-shadow: 0 20px 48px -32px rgba(23, 59, 70, 0.48), 0 2px 5px rgba(23, 59, 70, 0.06) !important;
+}
+
+#chat-window {
+    align-content: flex-start;
+}
+
+#chat-window .chat {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    margin: 0;
+}
+
+#chat-window .chat-start {
+    align-items: flex-start;
+}
+
+#chat-window .chat-end {
+    align-items: flex-end;
+}
+
+.message-bubble.chat-bubble {
+    max-width: min(88%, 860px) !important;
+    border: 1px solid var(--ds-line-soft) !important;
+    border-radius: 18px !important;
+    background: #f8fcfa !important;
+    color: var(--ds-ink) !important;
+    box-shadow: 0 12px 28px -24px rgba(23, 59, 70, 0.45) !important;
+}
+
+.message-bubble.chat-bubble::before {
+    display: none;
+}
+
+.message-bubble.chat-bubble.user-message,
+.message-bubble.chat-bubble-primary {
+    border-color: #b9ddd1 !important;
+    background: linear-gradient(135deg, #e8f6f0 0%, #d8eee7 100%) !important;
+    color: #164b4a !important;
+}
+
+.message-bubble.chat-bubble:hover {
+    box-shadow: 0 16px 30px -22px rgba(23, 59, 70, 0.5) !important;
+}
+
+#composer-shell {
+    border-top: 1px solid var(--ds-line-soft);
+    padding-top: 14px;
+}
+
+#composer-shell > .soft-card.card {
+    border-radius: 16px !important;
+}
+
+#composer-shell .input,
+#composer-shell .textarea {
+    border-color: #b8d2ca !important;
+    background: #fbfefd !important;
+    color: var(--ds-ink) !important;
+}
+
+#composer-shell .input:focus,
+#composer-shell .textarea:focus {
+    border-color: var(--ds-primary) !important;
+    box-shadow: 0 0 0 3px rgba(45, 123, 120, 0.14) !important;
+}
+
+#composer-shell .composer-input-card .textarea {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+#composer-shell .toggle {
+    --tglbg: #d4e2dd;
+}
+
+#composer-shell .toggle:checked {
+    --tglbg: var(--ds-primary);
+}
+
+#token-panel {
+    border-left-color: var(--ds-line) !important;
+}
+
+#token-panel .soft-card.card,
+#map-panel {
+    border: 1px solid rgba(190, 215, 208, 0.9) !important;
+    border-radius: 16px !important;
+    background: var(--ds-panel) !important;
+    box-shadow: 0 14px 30px -26px rgba(23, 59, 70, 0.5) !important;
+}
+
+#token-panel .card-border > .border-b,
+#map-panel > .border-b {
+    background: linear-gradient(180deg, #fbfefd 0%, #eff7f3 100%) !important;
+    border-color: var(--ds-line-soft) !important;
+}
+
+#token-panel .card-border > .border-b button,
+#map-panel > .border-b button {
+    border-color: #c5ddd5 !important;
+    background: #f7fcfa !important;
+    color: #39706b !important;
+}
+
+#token-panel .card.card-border {
+    background: #ffffff !important;
+}
+
+#token-panel .card.card-border .font-semibold {
+    color: var(--ds-ink) !important;
+}
+
+#nearby-list.list {
+    padding: 0;
+    border-color: var(--ds-line-soft) !important;
+    border-radius: 13px !important;
+    background: #f7fbf9 !important;
+}
+
+#nearby-list.list .nearby-item {
+    border-color: var(--ds-line-soft);
+}
+
+#nearby-list.list .nearby-item:hover {
+    background: #ffffff;
+}
+
+#page-tools > .soft-card.card,
+#page-token > .soft-card.card {
+    border: 1px solid rgba(190, 215, 208, 0.9) !important;
+    border-radius: 20px !important;
+    background: rgba(255, 255, 255, 0.84) !important;
+    box-shadow: 0 20px 48px -32px rgba(23, 59, 70, 0.42) !important;
+}
+
+#page-tools .tool-card.card {
+    min-height: 146px;
+    border-color: var(--ds-line-soft) !important;
+    border-radius: 16px !important;
+    background: #fbfefd !important;
+    box-shadow: 0 8px 18px -18px rgba(23, 59, 70, 0.5) !important;
+}
+
+#page-tools .tool-card.card:hover {
+    border-color: #a8d0c3 !important;
+    background: #ffffff !important;
+    box-shadow: 0 16px 28px -22px rgba(23, 59, 70, 0.5) !important;
+    transform: translateY(-2px);
+}
+
+#page-tools .tool-card .font-semibold {
+    color: var(--ds-primary-deep) !important;
+}
+
+#token-panel-body.code-shell {
+    border-color: #244c55 !important;
+    border-radius: 16px !important;
+    background: #10333e !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+#token-panel-body.code-shell #token-stream {
+    color: #d6f3e9 !important;
+    font-family: var(--font-mono);
+}
+
+@media (max-width: 1280px) {
+    #page-chat > section.soft-card.card {
+        border-radius: 16px !important;
+    }
+}
+
+@media (max-width: 1024px) {
+    .sidebar-bottom-nav.menu {
+        gap: 6px;
+    }
+
+    #page-chat > section.soft-card.card {
+        border-right: 0 !important;
+    }
+}
+
+@media (max-width: 640px) {
+    .hero-badge.badge {
+        width: 100%;
+    }
+
+    .message-bubble.chat-bubble {
+        max-width: 96% !important;
+    }
+}

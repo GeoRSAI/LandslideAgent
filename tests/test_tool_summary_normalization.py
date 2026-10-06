@@ -1,31 +1,20 @@
-from scripts.llm_service import _deterministic_tool_summary
+from scripts.llm_service import (
+    _select_tool_summary_text,
+)
 
 
-def test_tool_summary_uses_deterministic_complete_sentence():
-    summary = _deterministic_tool_summary(
-        "seg.run",
-        "ok",
-        {"area_ratio": 0.0163, "landslide_pixels": 4281},
-    )
-
-    assert summary == "Segmentation finished: landslide area ratio 1.63%, pixels=4281."
+def test_tool_summary_prefers_raw_response_when_available():
+    raw = "A short complete summary from the model."
+    content = "Different parsed content."
+    assert _select_tool_summary_text(raw, content) == "A short complete summary from the model."
 
 
-def test_tool_summary_keeps_classifier_confidence_only_for_classification():
-    summary = _deterministic_tool_summary(
-        "cls.run",
-        "ok",
-        {"class_name": "Earthflow", "confidence": 0.889},
-    )
-
-    assert summary == "Classification finished: Earthflow (0.89)."
+def test_tool_summary_falls_back_to_message_content_when_raw_response_is_empty():
+    raw = ""
+    content = "Parsed message content from the model."
+    assert _select_tool_summary_text(raw, content) == "Parsed message content from the model."
 
 
-def test_tool_summary_reports_failure_as_complete_sentence():
-    summary = _deterministic_tool_summary(
-        "seg.run",
-        "error",
-        {"error": "model unavailable"},
-    )
-
-    assert summary == "seg.run failed: model unavailable."
+def test_tool_summary_preserves_model_output_without_sentence_rewriting():
+    raw = "A concise summary without terminal punctuation"
+    assert _select_tool_summary_text(raw, "") == "A concise summary without terminal punctuation"

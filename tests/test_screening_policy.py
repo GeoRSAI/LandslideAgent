@@ -5,10 +5,17 @@ REQUIRED_SECTIONS = [
     "Final Decision Report",
     "Conclusion",
     "Evidence Summary",
-    "Image and Spatial Interpretation",
+    "Spatial Distribution",
+    "Image Feature Description",
     "Landslide Typology (Reference Only)",
-    "Geographic and Exposure Context",
-    "Reliability and Uncertainty",
+    "Rationale for Landslide Presence",
+    "Image Quality Assessment",
+    "Relative Position Within Image Frame",
+    "Environmental Impact",
+    "Confidence Level",
+    "Uncertainty Analysis",
+    "Causal Inference",
+    "Geographic Context",
     "Final Determination",
 ]
 
@@ -33,12 +40,11 @@ def test_negative_screening_stops_full_analysis():
         gate={"area_ratio": 0.0},
         segmentation=None,
         llm_second_pass=None,
-        llm_second_pass_threshold=0.6,
     )
 
     assert report["has_landslide"] is False
     assert report["report_source"] == "screening_early_stop"
-    assert report["severity"] == "none"
+    assert "severity" not in report  # Hazard severity is not inferred from one image.
     assert report["evidence"]["segmentation"] == "skipped_after_negative_screening"
     _assert_structured_sections(report)
 
@@ -61,11 +67,10 @@ def test_positive_screening_does_not_force_positive_final_decision():
         gate={"area_ratio": 0.01},
         segmentation={"area_ratio": 0.0, "landslide_pixels": 0, "polygon_count": 0},
         llm_second_pass=None,
-        llm_second_pass_threshold=0.6,
     )
 
     assert report["has_landslide"] is False
-    assert report["severity"] == "none"
+    assert "severity" not in report
     _assert_structured_sections(report)
 
 
@@ -85,11 +90,10 @@ def test_corroborated_positive_evidence_yields_positive_final_decision():
         gate={"area_ratio": 0.01},
         segmentation={"area_ratio": 0.03, "landslide_pixels": 1200, "polygon_count": 1},
         llm_second_pass=None,
-        llm_second_pass_threshold=0.6,
     )
 
     assert report["has_landslide"] is True
-    assert report["severity"] in {"low", "medium", "high"}
+    assert "severity" not in report
     _assert_structured_sections(report)
 
 
@@ -122,7 +126,6 @@ def test_report_foregrounds_whole_image_context_and_second_pass_review():
         gate={"area_ratio": 0.04},
         segmentation=segmentation,
         llm_second_pass=llm_second_pass,
-        llm_second_pass_threshold=0.6,
     )
 
     final_description = report["final_description"]
@@ -166,7 +169,6 @@ def test_description_only_second_pass_supplements_description_without_becoming_a
         gate={"area_ratio": 0.03},
         segmentation={"area_ratio": 0.03, "landslide_pixels": 1200, "polygon_count": 1},
         llm_second_pass=llm_second_pass,
-        llm_second_pass_threshold=0.6,
     )
 
     assert report["has_landslide"] is True
@@ -174,87 +176,6 @@ def test_description_only_second_pass_supplements_description_without_becoming_a
     assert report["decision_support"]["second_pass_negative"] is False
     assert report["decision_support"]["second_pass_descriptive"] is True
     assert "descriptive support only" in report["final_description"] or "descriptive and did not add an extra yes/no vote" in report["final_description"]
-    _assert_structured_sections(report)
-
-
-def test_llm_and_region_scores_are_ignored_in_final_report_confidence():
-    stage1 = {
-        "has_landslide": True,
-        "score": 0.01,
-        "assessment_label": "likely",
-        "evidence": "Likely | exposed scar on a steep hillside with downslope debris.",
-        "scene_description": "exposed scar on a steep hillside with downslope debris.",
-    }
-    refinement = {
-        "regions": [{"bbox": [10, 20, 90, 120], "score": 0.8, "class_id": 0}],
-        "area_ratio": 0.03,
-        "source": "segmentation_mask",
-    }
-    segmentation = {"area_ratio": 0.03, "landslide_pixels": 1200, "polygon_count": 1}
-
-    report = run_stage5(
-        stage1=stage1,
-        refinement=refinement,
-        classification={"class_name": "debris flow", "confidence": 0.7},
-        geo_context=None,
-        gate={"area_ratio": 0.03},
-        segmentation=segmentation,
-        llm_second_pass={
-            "review_mode": "seg_boundary_whole_image",
-            "review_purpose": "verification",
-            "reviewed_regions": 1,
-            "decision": "positive",
-            "score": 0.99,
-            "evidence": "Support | highlighted region aligns with the exposed scar.",
-        },
-        llm_second_pass_threshold=0.6,
-    )
-
-    assert report["has_landslide"] is True
-    assert report["confidence"] is None
-    assert report["confidence_source"] == "not_computed"
-    assert report["decision_support"]["llm_scores_ignored"] is True
-    assert report["decision_support"]["heuristic_scores_removed"] is True
-    assert "Initial Screening: Confirmed landslide presence with score" not in report["final_description"]
-    assert "top confidence" not in report["final_description"]
-    assert "confidence=0." not in report["final_description"]
-    _assert_structured_sections(report)
-
-
-def test_final_report_drops_obviously_incomplete_tail_sentences():
-    stage1 = {
-        "has_landslide": True,
-        "assessment_label": "likely",
-        "evidence": "Likely | A complete sentence about an exposed scar. The landslide is near a me",
-        "scene_description": "A complete sentence about an exposed scar. The landslide is near a me",
-    }
-    refinement = {
-        "regions": [{"bbox": [10, 20, 90, 120], "class_id": 0}],
-        "area_ratio": 0.03,
-        "source": "segmentation_mask",
-    }
-    report = run_stage5(
-        stage1=stage1,
-        refinement=refinement,
-        classification={"class_name": "debris flow", "confidence": 0.7},
-        geo_context=None,
-        gate={"area_ratio": 0.03},
-        segmentation={"area_ratio": 0.03, "landslide_pixels": 1200, "polygon_count": 1},
-        llm_second_pass={
-            "review_mode": "seg_boundary_whole_image",
-            "review_purpose": "description_only",
-            "reviewed_regions": 1,
-            "decision": "descriptive",
-            "evidence": "Describe | The highlighted region follows the exposed slope break. It is adjacent to a me",
-        },
-        llm_second_pass_threshold=0.6,
-    )
-
-    assert "near a." not in report["final_description"]
-    assert "near a me." not in report["final_description"]
-    assert "adjacent to a." not in report["final_description"]
-    assert "adjacent to a me." not in report["final_description"]
-    assert "A complete sentence about an exposed scar." in report["final_description"]
     _assert_structured_sections(report)
 
 
@@ -289,7 +210,6 @@ def test_final_report_strips_ellipsis_from_report_text():
         gate={"area_ratio": 0.03},
         segmentation=segmentation,
         llm_second_pass=llm_second_pass,
-        llm_second_pass_threshold=0.6,
     )
 
     assert "..." not in report["summary"]
@@ -336,7 +256,6 @@ def test_report_includes_slope_aspect_and_osm_poi_details_when_geo_context_avail
         gate={"area_ratio": 0.08},
         segmentation={"area_ratio": 0.04, "landslide_pixels": 2200, "polygon_count": 1},
         llm_second_pass=None,
-        llm_second_pass_threshold=0.6,
     )
 
     final_description = report["final_description"]

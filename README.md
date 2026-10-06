@@ -1,142 +1,83 @@
 # Landslide Agent
 
-An open-source multimodal landslide dataset and domain-rule augmented agent framework for remote sensing-based landslide identification, geospatial reasoning, and structured disaster report generation.
+A tool-driven framework for landslide analysis in satellite and aerial imagery, combining multimodal reasoning, segmentation, classification, geographic evidence, and structured reports.
 
-This repository provides a remote-sensing landslide analysis agent built around a FastAPI frontend, a JSON-RPC tool registry, and segmentation-guided multi-stage reasoning.
-
-## Features
-
-- FastAPI web frontend and OpenAI-style chat endpoint
-- JSON-RPC 2.0 tool protocol for agent-tool interaction
-- TIFF metadata reading, segmentation, candidate-region refinement, classification, geo-background query, decision fusion, and optional report writing
-- OpenMMLab-compatible adapters for MMSegmentation and MMPreTrain
-- Mock LLM mode for running the framework without local large-model weights
+This release includes framework code and the web interface. Model weights, trained adapter weights, datasets, private imagery and experiment results are not included.
 
 ## Dataset
 
-The open-source dataset is available on Google Drive: [Download dataset](https://drive.google.com/file/d/1wibzr3qJ4LTCzQzh_jSfEXs48Zla4Nwd/view?usp=sharing).
+The previously published dataset remains available through the [original dataset download](https://drive.google.com/file/d/1wibzr3qJ4LTCzQzh_jSfEXs48Zla4Nwd/view?usp=sharing). Dataset files are distributed separately from this code release.
 
 ## Architecture
 
-Main flow:
+Image metadata -> visual assessment -> segmentation -> refinement / conditional review -> classification and geographic context -> fusion -> report.
 
-1. `tiff.info`: read image metadata
-2. `llm.first_pass`: scene-level first-pass judgement
-3. `seg.run`: semantic segmentation
-4. `seg.refine`: segmentation-guided candidate-region refinement
-5. `cls.run`: scene/image classification
-6. `geo.background` / `geo.nearby`: optional geographic context
-7. `fuse.decision`: final decision fusion
-8. `report.write`: optional report JSON output
+The shared controller lives in `src/agent/controller.py`, the tool-calling loop in `src/orchestration/`, and the alternative LangGraph workflow in `src/graph/landslide_graph.py`. Service endpoints include `/v1/agent/analyze`, `/v1/graph/analyze`, and `/health`. See [methods](docs/METHODS.md).
 
-## Quick Start
+See the [deployment and usage guide](docs/USAGE.md) for model provisioning, OpenMMLab setup, service startup and configuration.
 
-Install core dependencies:
+## Installation
+
+Use Python 3.10+. Linux or WSL is recommended for GPU services and shell scripts. From the checkout root:
 
 ```bash
-pip install -r requirements.txt
-```
-
-Run the protocol demo:
-
-```bash
-python -m scripts.run_protocol_demo --image data/sample.tif --out outputs/report.protocol.json
-```
-
-Start the FastAPI frontend in mock mode:
-
-```bash
-LLM_MOCK=1 bash scripts/start_frontend_all.sh
-```
-
-Then open `http://127.0.0.1:8003/`.
-
-## Configuration
-
-Copy `.env.example` and fill in paths for your own environment:
-
-```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
 cp .env.example .env
+bash scripts/start_frontend_all.sh
 ```
 
-Important variables:
+Open http://127.0.0.1:8003/ and inspect `/health`. The example enables `LLM_MOCK=1` for a service demonstration. Mock mode replaces language-model responses; real segmentation and classification still require their own models.
 
-- `LLM_MODEL_PATH`: local large-model path. Leave empty when `LLM_MOCK=1`.
-- `LLM_LORA_PATH`: optional LoRA adapter path.
-- `MMSEG_CONFIG_PATH` and `MMSEG_CHECKPOINT_PATH`: MMSegmentation config and checkpoint.
-- `MMPRETRAIN_ROOT`, `CLS_CONFIG_PATH`, and `CLS_CHECKPOINT_PATH`: MMPreTrain source/config/checkpoint for classification.
-- `OPENTOPOGRAPHY_API_KEY`: optional API key for terrain background queries.
+Windows PowerShell can run the mock frontend directly after installing dependencies:
 
-Do not commit `.env`, private API keys, model weights, or checkpoints.
+```powershell
+$env:LLM_MOCK = "1"
+python -m uvicorn scripts.llm_service:app --host 127.0.0.1 --port 8003
+```
 
-## External Models And Frameworks
+The Bash launcher loads `.env`. Direct Uvicorn invocation uses process environment variables. Run from the checkout root and retain the source checkout for configuration and web assets.
 
-The open-source dataset is provided through the Google Drive link above. This repository does not include large-model weights, OpenMMLab source trees, or trained checkpoints. Users should install and configure these external dependencies separately according to their own licenses:
+## Model configuration
 
-- Large multimodal model, for example a local Qwen-VL compatible model
-- `mmsegmentation` / `mmcv` / `mmengine` for segmentation
-- `mmpretrain` for classification
-- Segmentation and classification checkpoints trained or obtained by the user
+| Component | Environment variables |
+| --- | --- |
+| Multimodal model | `LLM_MOCK=0`, `LLM_MODEL_PATH`, optionally `LLM_LORA_PATH` |
+| Dual-head adapter | `LLM_DUAL_HEAD_PATH`, `CLS_BACKEND=dualhead` |
+| Segmentation | `SEG_ENV_PYTHON`, `MMSEG_CONFIG_PATH`, `MMSEG_CHECKPOINT_PATH`, `MMSEG_DEVICE` |
+| MMPreTrain classifier | `CLS_BACKEND=convnext`, `CLS_ENV_PYTHON`, `MMPRETRAIN_ROOT`, `CLS_CONFIG_PATH`, `CLS_CHECKPOINT_PATH` |
+| Elevation provider | `GEO_DEM_PROVIDER`, optionally `OPENTOPOGRAPHY_API_KEY` |
+| Accessible images | `IMAGE_ALLOWED_ROOT` (defaults to checkout root) |
 
-## Using MMSegmentation
+Defaults under `models/` are placeholders. Provision PyTorch, Transformers, PEFT and model-specific utilities in the LLM environment; provision MMsegmentation / MMPreTrain and compatible OpenMMLab dependencies separately. Compatible GPU package versions depend on your checkpoints. Core installation does not install these model environments.
 
-Set the segmentation environment variables before starting services:
+Geographic tools contact external geocoding, elevation and OpenStreetMap services. Network access and provider availability affect results. Keep credentials in your local environment. The service has no authentication layer; use the default loopback binding or an authenticated gateway.
+
+## Development
 
 ```bash
-export SEG_BACKEND=mmseg
-export MMSEG_CONFIG_PATH=/path/to/mmseg_config.py
-export MMSEG_CHECKPOINT_PATH=/path/to/mmseg_checkpoint.pth
-export MMSEG_DEVICE=cuda:0
-export MMSEG_LANDSLIDE_CLASS_INDEX=1
+python -m pytest -q
 ```
 
-`MMSEG_LANDSLIDE_CLASS_INDEX` should match your dataset label mapping.
+Tests isolate agent rules and workflows through fake or injected dependencies. They do not establish trained-model accuracy. Configure thresholds in `configs/thresholds.json` and environment overrides.
 
-## Using MMPreTrain
+- `src/agent/`: shared policy and JSON-RPC protocol
+- `src/orchestration/`: tool-calling agent loop
+- `src/graph/`: LangGraph workflow
+- `src/models/`, `src/pipelines/`, `src/tools/`: inference, analysis, and geographic tools
+- `scripts/`: services and batch utilities
+- `static/`: web interface
+- `tests/`: regression tests
 
-Set the classification environment variables:
+See [release preparation](docs/RELEASE_PREPARATION.md) and [contribution guidance](CONTRIBUTING.md).
 
-```bash
-export CLS_ENV_PYTHON=/path/to/python
-export MMPRETRAIN_ROOT=/path/to/mmpretrain
-export CLS_CONFIG_PATH=/path/to/classification_config.py
-export CLS_CHECKPOINT_PATH=/path/to/classification_checkpoint.pth
-export CLS_DEVICE=cpu
-# Optional class-id to class-name mapping file
-# export CLS_CLASS_MAPPING_PATH=/path/to/class_mapping.txt
-```
+## License
 
-## Standard Agent Protocol
+[MIT](LICENSE). Model weights, datasets and third-party components retain their own licenses.
 
-This project includes a minimal JSON-RPC 2.0 tool protocol:
+## Dual-head inference sources
 
-- `tools/list`: list available tools and input schemas
-- `tools/call`: call a tool with `{name, arguments}`
+Dual-head scripts and configuration are included under `models/landslide_qwen3vl_dual_head_continuous_10ep_best/`. Trained adapter and classification-head weights are excluded. See [adapter usage](docs/DUAL_HEAD_USAGE.md).
 
-Protocol server and registry:
-
-- `src/agent/protocol.py`
-- `src/agent/default_server.py`
-
-## Project Layout
-
-- `configs/thresholds.json`: decision thresholds
-- `data/sample.tif`: optional sample image for demo use
-- `scripts/llm_service.py`: main FastAPI app, chat endpoint, and frontend entry
-- `scripts/seg_service.py`: segmentation service
-- `scripts/cls_service.py`: classification service
-- `scripts/start_frontend_all.sh`: startup script
-- `scripts/run_protocol_demo.py`: protocol-based CLI demo
-- `src/agent/`: JSON-RPC protocol and tool registry
-- `src/models/`: LLM, segmentation, and classification adapters
-- `src/pipelines/`: pipeline stages and fusion logic
-- `src/tools/`: TIFF, crop, OSM, and geo-background tools
-- `static/index.html`: web UI
-
-`logs/` and `outputs/` are runtime-generated directories and are intentionally ignored by git.
-
-## Notes
-
-- Use `LLM_MOCK=1` when model weights are unavailable.
-- Runtime outputs are JSON-friendly dictionaries for downstream integration.
-- This project is intended for research and demonstration. Validate model behavior, data rights, and deployment security before production use.
+First-pass visual assessment defaults to `LLM_FIRST_PASS_ADAPTER=dualhead`. Supply the dual-head weights for real inference, or explicitly set this variable to `base`. Second-pass visual review continues to default to the base model.

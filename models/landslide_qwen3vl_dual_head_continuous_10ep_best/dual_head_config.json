@@ -1,0 +1,197 @@
+{
+  "base_model": "Qwen/Qwen3-VL-8B-Instruct",
+  "labels": [
+    "No landslide",
+    "Debris flow",
+    "Mud flow",
+    "Mudslide",
+    "Earth slide",
+    "Earthflow",
+    "Rock fall",
+    "Rock slide"
+  ],
+  "num_labels": 8,
+  "classification_feature": "last_hidden_state at prompt_len - 1",
+  "classification_head": {
+    "type": "LayerNorm-Linear-GELU-Dropout-Linear",
+    "input_size": 4096,
+    "hidden_size": 2048,
+    "dropout": 0.1
+  },
+  "head_initialization": "PyTorch random initialization",
+  "use_lora": true,
+  "class_balanced_loss": true,
+  "class_balance_beta": 0.999,
+  "checkpoint": {
+    "epoch": 10,
+    "micro_step_in_epoch": 1701,
+    "global_step": 2130,
+    "total_updates": 2130,
+    "contains_base_model_weights": false,
+    "contains_optimizer_state": true
+  },
+  "metrics": {
+    "accuracy": 0.7095238095238096,
+    "balanced_accuracy": 0.669857755257886,
+    "macro_f1": 0.6707428381198093,
+    "correct": 149,
+    "total": 210,
+    "confusion_matrix": [
+      [
+        30,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        43,
+        1,
+        0,
+        7,
+        0,
+        2,
+        3
+      ],
+      [
+        0,
+        3,
+        28,
+        0,
+        1,
+        1,
+        8,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        8,
+        0,
+        0,
+        1,
+        1
+      ],
+      [
+        0,
+        6,
+        0,
+        2,
+        7,
+        1,
+        0,
+        1
+      ],
+      [
+        1,
+        1,
+        0,
+        0,
+        2,
+        7,
+        0,
+        1
+      ],
+      [
+        0,
+        3,
+        2,
+        0,
+        2,
+        0,
+        19,
+        2
+      ],
+      [
+        0,
+        1,
+        1,
+        0,
+        1,
+        2,
+        3,
+        7
+      ]
+    ],
+    "per_class": [
+      {
+        "label": "No landslide",
+        "support": 31,
+        "predicted": 31,
+        "correct": 30,
+        "precision": 0.967741935483871,
+        "recall": 0.967741935483871,
+        "f1": 0.967741935483871
+      },
+      {
+        "label": "Debris flow",
+        "support": 56,
+        "predicted": 58,
+        "correct": 43,
+        "precision": 0.7413793103448276,
+        "recall": 0.7678571428571429,
+        "f1": 0.7543859649122806
+      },
+      {
+        "label": "Mud flow",
+        "support": 41,
+        "predicted": 32,
+        "correct": 28,
+        "precision": 0.875,
+        "recall": 0.6829268292682927,
+        "f1": 0.767123287671233
+      },
+      {
+        "label": "Mudslide",
+        "support": 10,
+        "predicted": 10,
+        "correct": 8,
+        "precision": 0.8,
+        "recall": 0.8,
+        "f1": 0.8000000000000002
+      },
+      {
+        "label": "Earth slide",
+        "support": 17,
+        "predicted": 20,
+        "correct": 7,
+        "precision": 0.35,
+        "recall": 0.4117647058823529,
+        "f1": 0.37837837837837834
+      },
+      {
+        "label": "Earthflow",
+        "support": 12,
+        "predicted": 11,
+        "correct": 7,
+        "precision": 0.6363636363636364,
+        "recall": 0.5833333333333334,
+        "f1": 0.6086956521739131
+      },
+      {
+        "label": "Rock fall",
+        "support": 28,
+        "predicted": 33,
+        "correct": 19,
+        "precision": 0.5757575757575758,
+        "recall": 0.6785714285714286,
+        "f1": 0.6229508196721312
+      },
+      {
+        "label": "Rock slide",
+        "support": 15,
+        "predicted": 15,
+        "correct": 7,
+        "precision": 0.4666666666666667,
+        "recall": 0.4666666666666667,
+        "f1": 0.4666666666666667
+      }
+    ],
+    "lm_loss": 0.7276389782627424
+  }
+}

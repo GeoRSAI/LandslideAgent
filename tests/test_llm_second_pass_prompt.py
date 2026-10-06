@@ -32,4 +32,3 @@ def test_second_pass_prompt_uses_boxed_whole_image_guidance(monkeypatch):
     assert "segmentation-mask boundary" in system_text
     assert result["decision"] == "positive"
     assert result["review_mode"] == "seg_boundary_whole_image"
-    assert "score" not in result

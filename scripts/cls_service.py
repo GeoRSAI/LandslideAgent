@@ -45,10 +45,16 @@ def _parse_classifier_output(stdout_text: str) -> dict:
 
 def _service_config() -> dict[str, str]:
     return {
-        "env_python": os.getenv("CLS_ENV_PYTHON", "python"),
-        "mmpretrain_root": os.getenv("MMPRETRAIN_ROOT", ""),
-        "config_path": os.getenv("CLS_CONFIG_PATH", ""),
-        "checkpoint_path": os.getenv("CLS_CHECKPOINT_PATH", ""),
+        "env_python": os.getenv("CLS_ENV_PYTHON", __import__("sys").executable),
+        "mmpretrain_root": os.getenv("MMPRETRAIN_ROOT", "models/mmpretrain-main"),
+        "config_path": os.getenv(
+            "CLS_CONFIG_PATH",
+            "models/mmpretrain-main/work_dirs/_debug_convnext_start/convnext-tiny_1xb16_landslide-50e.py",
+        ),
+        "checkpoint_path": os.getenv(
+            "CLS_CHECKPOINT_PATH",
+            "models/mmpretrain-main/work_dirs/_debug_convnext_start/best_accuracy_top1_epoch_45.pth",
+        ),
         "class_mapping_path": os.getenv("CLS_CLASS_MAPPING_PATH", ""),
         "device": os.getenv("CLS_DEVICE", "cpu"),
     }

@@ -1,10 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "landslide-agent"
 version = "0.1.0"
-description = "Minimal remote-sensing landslide agent scaffold"
+description = "Tool-driven remote-sensing landslide analysis framework"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "pillow",
+    "pydantic>=2,<3",
+    "langgraph>=0.6,<1.0",
     "requests",
     "numpy",
     "rasterio",
@@ -15,3 +22,13 @@ dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[project.urls]
+Repository = "https://github.com/GeoRSAI/LandslideAgent"
+Issues = "https://github.com/GeoRSAI/LandslideAgent/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "httpx"]
+
+[tool.setuptools.packages.find]
+include = ["src*", "scripts*"]

@@ -1,6 +1,15 @@
 {
   "llm_first_pass_threshold": 0.55,
   "small_area_ratio_threshold": 0.2,
-  "llm_second_pass_threshold": 0.60,
-  "min_region_score": 0.45
+
+  "enforce_consistency_gate": true,
+  "screening_seg_disagreement_ratio": 0.05,
+  "cls_min_confidence": 0.35,
+
+  "require_modality_agreement": false,
+  "seg_positive_area_ratio": 0.01,
+  "seg_positive_area_ratio_small": 0.005,
+  "seg_positive_min_pixels": 512,
+  "severity_high_area_ratio": 0.15,
+  "severity_medium_area_ratio": 0.05
 }

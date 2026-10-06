@@ -1,59 +1,28 @@
 from __future__ import annotations
 
-import re
-
+from src.agent.controller import get_policy
 from src.models.llm_client import llm_generate_final_report
+from src.utils.geometry import describe_primary_candidate_position
+from src.utils.landslide_taxonomy import reconcile_landslide_types
 
 
 REQUIRED_SECTIONS = [
     "Final Decision Report",
     "Conclusion",
     "Evidence Summary",
-    "Image and Spatial Interpretation",
+    "Spatial Distribution",
+    "Image Feature Description",
     "Landslide Typology (Reference Only)",
-    "Geographic and Exposure Context",
-    "Reliability and Uncertainty",
+    "Rationale for Landslide Presence",
+    "Image Quality Assessment",
+    "Relative Position Within Image Frame",
+    "Environmental Impact",
+    "Confidence Level",
+    "Uncertainty Analysis",
+    "Causal Inference",
+    "Geographic Context",
     "Final Determination",
 ]
-
-
-_INCOMPLETE_TAIL_PATTERNS = (
-    " a",
-    " an",
-    " the",
-    " of",
-    " to",
-    " near",
-    " near a",
-    " adjacent to",
-    " adjacent to a",
-    " with",
-    " by",
-    " in",
-    " on",
-    " at",
-    " from",
-)
-
-
-def _drop_incomplete_tail_sentence(text: str) -> str:
-    cleaned = " ".join(str(text or "").split()).strip()
-    if not cleaned:
-        return ""
-    stripped = cleaned.rstrip()
-    lowered = stripped.rstrip(".!?").lower()
-    has_bad_short_tail = bool(
-        re.search(
-            r"\b(?:near|adjacent to|beside|next to|with|of|to|from|in|on|at|by|for)\s+(?:a|an|the)\s+[a-z]{1,3}$",
-            lowered,
-        )
-    )
-    if has_bad_short_tail or any(lowered.endswith(pattern) for pattern in _INCOMPLETE_TAIL_PATTERNS):
-        last_boundary = max(stripped.rfind("."), stripped.rfind("!"), stripped.rfind("?"))
-        if last_boundary >= 0:
-            return stripped[: last_boundary + 1].strip()
-        return ""
-    return stripped
 
 
 def _clean_text(value: object, default: str = "Not available.") -> str:
@@ -64,7 +33,6 @@ def _clean_text(value: object, default: str = "Not available.") -> str:
     while ".." in text:
         text = text.replace("..", ".")
     text = text.replace(" .", ".")
-    text = _drop_incomplete_tail_sentence(text)
     return text or default
 
 
@@ -264,23 +232,36 @@ def _second_pass_workflow_text(
     return "No second-pass whole-image review was used in this workflow."
 
 
-def _screening_decision(stage1: dict | None, refinement: dict | None) -> dict[str, object]:
+def _screening_decision(
+    stage1: dict | None, refinement: dict | None, segmentation: dict | None = None
+) -> dict[str, object]:
     stage1 = stage1 or {}
     refinement = refinement or {}
     regions = refinement.get("regions", [])
     region_count = len(regions) if isinstance(regions, list) else 0
-    stage1_positive = bool(stage1.get("has_landslide", False))
+    policy = get_policy()
+    stage1_positive = policy.stage1_is_positive(stage1) is True
     refinement_positive = region_count > 0
+    # A material segmentation signal must not be silently dropped by the
+    # early-stop gate: it is a primary vote in the fusion decision.
+    segmentation_positive = (
+        policy.seg_is_positive(segmentation) if segmentation is not None else False
+    )
     return {
         "stage1_positive": stage1_positive,
         "refinement_positive": refinement_positive,
-        "has_positive_screening": bool(stage1_positive or refinement_positive),
+        "segmentation_positive": segmentation_positive,
+        "has_positive_screening": bool(
+            stage1_positive or refinement_positive or segmentation_positive
+        ),
         "region_count": region_count,
     }
 
 
-def screening_requires_full_analysis(stage1: dict | None, refinement: dict | None) -> bool:
-    return bool(_screening_decision(stage1, refinement)["has_positive_screening"])
+def screening_requires_full_analysis(
+    stage1: dict | None, refinement: dict | None, segmentation: dict | None = None
+) -> bool:
+    return bool(_screening_decision(stage1, refinement, segmentation)["has_positive_screening"])
 
 
 def _negative_scene_summary(stage1: dict | None, refinement: dict | None) -> str:
@@ -294,6 +275,16 @@ def _negative_scene_summary(stage1: dict | None, refinement: dict | None) -> str
         )
     return "No landslide indicated after initial LLM and segmentation-guided screening."
 
+
+
+def _top_region_score(refinement: dict | None) -> float:
+    regions = (refinement or {}).get("regions", [])
+    if not isinstance(regions, list):
+        return 0.0
+    return max(
+        [float(item.get("score", 0.0) or 0.0) for item in regions if isinstance(item, dict)],
+        default=0.0,
+    )
 
 
 def _refinement_source(refinement: dict | None) -> str:
@@ -312,172 +303,136 @@ def _refinement_source(refinement: dict | None) -> str:
     return ""
 
 
-def _segmentation_support(segmentation: dict | None) -> tuple[bool, float, int]:
-    segmentation = segmentation or {}
-    seg_ratio = float(segmentation.get("area_ratio", 0.0) or 0.0)
-    seg_pixels = int(segmentation.get("landslide_pixels", 0) or 0)
-    positive = seg_ratio >= 0.01 or (seg_ratio >= 0.005 and seg_pixels >= 512)
-    return positive, seg_ratio, seg_pixels
-
-
-def _classification_confidence(classification: dict | None) -> float:
-    try:
-        return min(max(float((classification or {}).get("confidence", 0.0) or 0.0), 0.0), 1.0)
-    except Exception:
-        return 0.0
-
-
 def _derive_fused_decision(
     *,
     stage1: dict,
     refinement: dict,
     segmentation: dict | None,
-    classification: dict | None,
     llm_second_pass: dict | None,
-    llm_second_pass_threshold: float,
-    min_region_score: float,
     gate: dict | None,
 ) -> dict[str, object]:
-    stage1_label = _stage1_assessment_label(stage1)
-    _ = min_region_score  # Kept for backward-compatible calls; region score thresholds are no longer used.
-    stage1_positive = bool((stage1 or {}).get("has_landslide", False) or stage1_label == "likely")
+    """Thin adapter over the single decision rule in ``LandslidePolicy``.
+
+    The landslide yes/no verdict and its confidence (a real model score, never
+    synthesised) are decided by
+    ``policy.fuse_decision`` (whole-image VLM screening cross-validated against
+    segmentation, arbitrated by the boundary re-check's verdict label on
+    disagreement). This function only keeps the ``support_summary`` shape the
+    report renderer wants.
+    """
+    # ``gate.area_ratio`` (the refinement extent seen by the caller) overrides
+    # the raw refinement ratio used by the fusion rule when supplied.
+    extent_ref = dict(refinement or {})
+    if isinstance(gate, dict) and "area_ratio" in gate:
+        extent_ref["area_ratio"] = gate.get("area_ratio")
+
+    decision = get_policy().fuse_decision(
+        stage1=stage1 or {},
+        segmentation=segmentation,
+        refinement=extent_ref,
+        llm_second_pass=llm_second_pass,
+    )
+    modalities = decision["modalities"]
 
     region_count = int(_screening_decision(stage1, refinement)["region_count"])
-    refinement_source = _refinement_source(refinement)
-    segmentation_guided_refinement = ("seg" in refinement_source) or ("mask" in refinement_source)
-    reliable_region_signal = (
-        (not segmentation_guided_refinement)
-        and region_count > 0
-    )
-
-    seg_positive, seg_ratio, seg_pixels = _segmentation_support(segmentation)
-
-    second_pass_decision = _second_pass_decision(llm_second_pass)
-    second_pass_purpose = _second_pass_purpose(llm_second_pass)
-    second_pass_positive = (
-        second_pass_purpose != "description_only"
-        and second_pass_decision == "positive"
-    )
-    second_pass_negative = second_pass_purpose != "description_only" and second_pass_decision == "negative"
-    second_pass_descriptive = second_pass_purpose == "description_only"
-
-    positive_votes = sum(
-        int(flag)
-        for flag in (
-            stage1_positive,
-            reliable_region_signal,
-            seg_positive,
-            second_pass_positive,
-        )
-    )
-    has_landslide = positive_votes >= 2
-
-    region_area_ratio = float((gate or {}).get("area_ratio", refinement.get("area_ratio", 0.0) or 0.0) or 0.0)
-    if not has_landslide:
-        severity = "none"
-    elif max(seg_ratio, region_area_ratio) >= 0.15:
-        severity = "high"
-    elif max(seg_ratio, region_area_ratio) >= 0.05:
-        severity = "medium"
-    else:
-        severity = "low"
+    top_region_score = _top_region_score(refinement)
 
     return {
-        "has_landslide": has_landslide,
-        "severity": severity,
-        "confidence": None,
-        "confidence_source": "not_computed",
+        "has_landslide": decision["has_landslide"],
+        "confidence": decision["confidence"],
+        "confidence_source": decision["confidence_source"],
+        "severity": decision["severity"],
         "support_summary": {
-            "stage1_positive": stage1_positive,
-            "reliable_region_signal": reliable_region_signal,
-            "segmentation_positive": seg_positive,
-            "second_pass_positive": second_pass_positive,
-            "second_pass_negative": second_pass_negative,
-            "second_pass_descriptive": second_pass_descriptive,
-            "llm_scores_ignored": True,
-            "heuristic_scores_removed": True,
-            "positive_votes": positive_votes,
+            "decision_basis": decision["decision_basis"],
+            "stage1_positive": modalities["vlm_positive"],
+            "vlm_verdict": modalities["vlm_verdict"],
+            "segmentation_positive": modalities["segmentation_positive"],
+            "segmentation_area_ratio": modalities["segmentation_area_ratio"],
+            "modality_agreement": modalities["agreement"],
+            "second_pass_role": modalities["second_pass_role"],
+            "second_pass_positive": modalities["second_pass_positive"],
+            "second_pass_negative": modalities["second_pass_negative"],
+            "second_pass_descriptive": modalities["second_pass_descriptive"],
             "region_count": region_count,
-            "refinement_source": refinement_source or "unknown",
-            "segmentation_area_ratio": round(seg_ratio, 6),
+            "refinement_source": _refinement_source(refinement) or "unknown",
         },
     }
 
 
-def _first_valid_bbox(refinement: dict | None) -> list[float] | None:
-    regions = (refinement or {}).get("regions", [])
-    if not isinstance(regions, list):
-        return None
-    for det in regions:
-        bbox = det.get("bbox") if isinstance(det, dict) else None
-        if isinstance(bbox, list) and len(bbox) == 4:
-            try:
-                return [float(v) for v in bbox]
-            except Exception:
-                return None
-    return None
+_describe_frame_position = describe_primary_candidate_position
 
 
-def _bbox_text(bbox: list[float] | None) -> str:
-    if not isinstance(bbox, list) or len(bbox) != 4:
-        return "not available"
-    return "[" + ", ".join(f"{float(v):.1f}" for v in bbox) + "]"
+_QWEN_NAME = "Qwen classification head"
+_CONVNEXT_NAME = "ConvNeXt image classifier"
 
 
-def _estimate_frame_extent(refinement: dict | None) -> tuple[float, float]:
-    candidate_tiles = (refinement or {}).get("candidate_tiles", [])
-    if not isinstance(candidate_tiles, list):
-        return 0.0, 0.0
-    max_x = 0.0
-    max_y = 0.0
-    for tile in candidate_tiles:
-        if not isinstance(tile, dict):
-            continue
-        try:
-            tile_x = float(tile.get("x", 0.0) or 0.0)
-            tile_y = float(tile.get("y", 0.0) or 0.0)
-            tile_w = float(tile.get("w", 0.0) or 0.0)
-            tile_h = float(tile.get("h", 0.0) or 0.0)
-        except Exception:
-            continue
-        max_x = max(max_x, tile_x + max(0.0, tile_w))
-        max_y = max(max_y, tile_y + max(0.0, tile_h))
-    return max_x, max_y
+def _classifier_reconciliation(classification: dict | None) -> dict[str, object]:
+    """Cross-check the two image classifiers inside the classification tool.
+
+    Both opinions come from models that actually looked at the image: the Qwen
+    classification head (``sources.vlm``) and the ConvNeXt image classifier
+    (``sources.image_classifier``). Their Cruden-Varnes resolution is already
+    computed by the tool; this only restates it with unambiguous names.
+    """
+    cls = classification or {}
+    sources = cls.get("sources") if isinstance(cls.get("sources"), dict) else {}
+    qwen = str(((sources.get("vlm") or {}).get("class_name")) or "")
+    convnext = str(((sources.get("image_classifier") or {}).get("class_name")) or "")
+    resolved = str(cls.get("class_name", "") or "")
+    resolution = str(cls.get("resolution", "") or "")
+    if qwen and convnext:
+        status = {
+            "subclass_agreement": "agreement",
+            "movement_parent_fallback": "parent_fallback",
+            "material_parent_fallback": "parent_fallback",
+            "conflict": "conflict",
+        }.get(resolution, "conflict" if cls.get("conflict") else "agreement")
+    elif resolved:
+        status = "single_source"
+    else:
+        status = "unavailable"
+    return {
+        "qwen_head_label": qwen,
+        "convnext_label": convnext,
+        "resolved_label": resolved,
+        "parent_class": str(cls.get("parent_class", "") or ""),
+        "status": status,
+        "conflict": status == "conflict",
+    }
 
 
-def _describe_frame_position(refinement: dict | None) -> str:
-    bbox = _first_valid_bbox(refinement)
-    if bbox is None:
-        return "No retained candidate bbox is available for frame-relative positioning."
-
-    frame_w, frame_h = _estimate_frame_extent(refinement)
-    if frame_w <= 0.0 or frame_h <= 0.0:
+def _classification_reconciliation_report_note(reconciliation: dict[str, object]) -> str:
+    status = str(reconciliation.get("status", "unavailable") or "unavailable")
+    qwen = str(reconciliation.get("qwen_head_label", "") or "unknown")
+    convnext = str(reconciliation.get("convnext_label", "") or "unknown")
+    resolved = str(reconciliation.get("resolved_label", "") or "unknown")
+    if status == "agreement":
+        return f"Inference: The {_QWEN_NAME} and the {_CONVNEXT_NAME} agree on the Cruden-Varnes subtype ({resolved})."
+    if status == "parent_fallback":
         return (
-            f"Primary candidate bbox={_bbox_text(bbox)} pixels; normalized frame position is unavailable "
-            "because full image dimensions were not propagated to fusion."
+            f"Inference: The {_QWEN_NAME} ({qwen}) and the {_CONVNEXT_NAME} ({convnext}) differ on the subtype "
+            f"but share a Cruden-Varnes parent class; the report falls back to that parent class ({resolved})."
         )
+    if status == "conflict":
+        return (
+            f"Inference: Classification conflict. The {_QWEN_NAME} proposed {qwen}, while the {_CONVNEXT_NAME} proposed "
+            f"{convnext}; they disagree even at the Cruden-Varnes parent level, so no subtype was forced."
+        )
+    if status == "single_source":
+        return f"Inference: Only one classifier opinion was available ({resolved}); cross-classifier agreement was not evaluated."
+    return "Inference: No usable landslide subtype was returned by the classification tool."
 
-    x1, y1, x2, y2 = bbox
-    cx = (x1 + x2) / 2.0
-    cy = (y1 + y2) / 2.0
-    rel_x = cx / frame_w
-    rel_y = cy / frame_h
 
-    if rel_x < 0.33:
-        horiz = "left"
-    elif rel_x > 0.67:
-        horiz = "right"
-    else:
-        horiz = "center"
+def _confidence_phrase(confidence: float | None, source: str = "") -> str:
+    """Report the subtype classifier's confidence.
 
-    if rel_y < 0.33:
-        vert = "upper"
-    elif rel_y > 0.67:
-        vert = "lower"
-    else:
-        vert = "middle"
-
-    return f"Primary candidate region lies in the {vert}-{horiz} part of the frame; bbox={_bbox_text(bbox)} pixels."
+    ``confidence`` is the classification model's score (or ``None``). The
+    detection verdict itself is a rule-based cross-modality decision and carries
+    no separate numeric confidence, so only the classifier's score is reported.
+    """
+    if confidence is None:
+        return "the subtype classifier stated no numeric confidence"
+    return f"the subtype classifier stated a confidence score of {confidence:.2f}"
 
 
 def _format_geo_context(geo_context: dict | None) -> tuple[dict, dict, dict, int, int]:
@@ -660,6 +615,75 @@ def _format_recommendations_text(report: dict, fallback: str) -> str:
     return "\n".join(f"{idx}. {_ensure_sentence(text)}" for idx, text in enumerate(deduped, start=1))
 
 
+def _looks_like_llm_final_report(text: str) -> bool:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return False
+
+    lowered = cleaned.lower()
+    return all(section.lower() in lowered for section in REQUIRED_SECTIONS)
+
+
+def _match_section_heading(line: str, section: str) -> str | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    stripped = stripped.lstrip("#").strip()
+    if not stripped.lower().startswith(section.lower()):
+        return None
+    tail = stripped[len(section) :].strip()
+    if not tail:
+        return ""
+    if tail.startswith(":") or tail.startswith("-"):
+        return tail[1:].strip()
+    return None
+
+
+def _normalize_llm_sectioned_report(
+    text: str, overrides: dict[str, str] | None = None
+) -> str:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return ""
+
+    lines = cleaned.splitlines()
+    seen: set[str] = set()
+    content_by_section: dict[str, list[str]] = {section: [] for section in REQUIRED_SECTIONS}
+    current_section: str | None = None
+
+    for line in lines:
+        matched_section = None
+        inline_content = ""
+        for section in REQUIRED_SECTIONS:
+            match = _match_section_heading(line, section)
+            if match is not None:
+                matched_section = section
+                inline_content = match
+                break
+        if matched_section:
+            seen.add(matched_section)
+            current_section = matched_section
+            if inline_content:
+                content_by_section[current_section].append(inline_content)
+            continue
+        if current_section:
+            content_by_section[current_section].append(line)
+
+    if not all(section in seen for section in REQUIRED_SECTIONS):
+        return ""
+
+    overrides = overrides or {}
+    blocks: list[str] = []
+    for section in REQUIRED_SECTIONS:
+        body = str(overrides.get(section, "") or "").strip()
+        if not body:
+            body = "\n".join(content_by_section.get(section, [])).strip()
+        blocks.append(f"### {section}")
+        blocks.append(body)
+        blocks.append("")
+    return "\n".join(blocks).strip()
+
+
 def _format_structured_final_description(
     *,
     report: dict,
@@ -678,6 +702,7 @@ def _format_structured_final_description(
     llm_second_pass = llm_second_pass or {}
     report = report or {}
 
+    screening = _screening_decision(stage1, refinement)
     regions = refinement.get("regions", []) if isinstance(refinement.get("regions"), list) else []
     region_count = len(regions)
     seg_ratio = float(segmentation.get("area_ratio", 0.0) or 0.0)
@@ -703,10 +728,22 @@ def _format_structured_final_description(
     report_spatial_distribution = _clean_text(report.get("spatial_distribution", ""), "")
     stage1_evidence = _strip_leading_assessment_token(stage1.get("evidence", "")) or "No scene-level evidence was provided."
     stage1_label = _stage1_assessment_label(stage1)
+    stage1_score = float(stage1.get("score", 0.0) or 0.0)
 
     report_evidence = report.get("evidence") if isinstance(report.get("evidence"), dict) else {}
     region_evidence = _clean_text(report_evidence.get("refinement", ""), f"regions={region_count}")
+    seg_evidence = _clean_text(
+        report_evidence.get("segmentation", ""),
+        f"ratio={seg_ratio:.4f}, pixels={seg_pixels}",
+    )
     geo_evidence = _clean_text(report_evidence.get("geo_context", ""), "")
+
+    tool_interpretation = _strip_inline_assessment_tokens(report.get("tool_interpretation", ""))
+    if not tool_interpretation:
+        tool_interpretation = (
+            f"Segmentation-guided refinement retained {region_count} candidate region(s); segmentation reported {seg_evidence}; "
+            f"classification evidence was {_clean_text(report_evidence.get('classification', ''), 'not emphasized')}"
+        )
 
     second_pass_workflow = _second_pass_workflow_text(refinement, llm_second_pass, region_area_ratio)
     second_pass_decision = _second_pass_decision(llm_second_pass)
@@ -733,17 +770,24 @@ def _format_structured_final_description(
         else:
             classification_note = "No reliable classification reference was available for subtype interpretation."
 
-    severity = str(report.get("severity", "none") or "none").lower()
+    _raw_conf = classification.get("confidence")
+    confidence = float(_raw_conf) if isinstance(_raw_conf, (int, float)) else None
+    confidence_phrase = _confidence_phrase(confidence)
     has_landslide = bool(report.get("has_landslide", False))
+
+    top_region_score = max(
+        [float(det.get("score", 0.0) or 0.0) for det in regions if isinstance(det, dict)],
+        default=0.0,
+    )
 
     # Conclusion
     if has_landslide:
         conclusion = _ensure_sentence(
-            "Landslide presence is confirmed by cross-stage evidence."
+            f"Landslide presence is confirmed; {confidence_phrase}."
         )
     else:
         conclusion = _ensure_sentence(
-            "Landslide presence is not confirmed under current evidence."
+            f"Landslide presence is not confirmed under current evidence; {confidence_phrase}."
         )
     if report_summary:
         conclusion = f"{conclusion} {_ensure_sentence(report_summary)}"
@@ -798,7 +842,7 @@ def _format_structured_final_description(
         evidence_lines.append(_ensure_sentence(f"Second-pass Review: {second_pass_workflow}"))
     evidence_summary = " ".join(line for line in evidence_lines if line)
 
-    # Image and Spatial Interpretation
+    # Spatial Distribution
     frame_position_text = _describe_frame_position(refinement)
     if report_spatial_distribution:
         spatial_distribution = _ensure_sentence(report_spatial_distribution)
@@ -814,13 +858,11 @@ def _format_structured_final_description(
         f"{_ensure_sentence(f'Segmentation footprint covers {seg_ratio * 100:.1f}% of the frame, with candidate-area ratio {region_area_ratio:.4f}.')}"
     )
 
+    # Image Feature Description (overall description listed separately)
     overall_scene_line = _ensure_sentence(f"Overall scene description: {whole_image_overview}")
-    image_spatial_interpretation = f"{overall_scene_line} {spatial_distribution}"
+    image_feature_description = overall_scene_line
     if report_visual_description:
-        image_spatial_interpretation = (
-            f"{image_spatial_interpretation}\n"
-            f"{_ensure_sentence(f'Detailed image interpretation: {report_visual_description}')}"
-        )
+        image_feature_description = f"{image_feature_description}\n{_ensure_sentence(f'Detailed image interpretation: {report_visual_description}') }"
 
     # Landslide Typology
     if cls_name != "unknown":
@@ -833,7 +875,40 @@ def _format_structured_final_description(
     else:
         typology = _ensure_sentence("No robust subtype classification was available; typology remains open and reference-only.")
 
-    # Geographic and Exposure Context
+    # Rationale
+    if has_landslide:
+        rationale_parts = []
+        if screening["stage1_positive"]:
+            rationale_parts.append("positive whole-scene screening")
+        if region_count > 0:
+            rationale_parts.append(f"retained segmentation-guided candidates ({region_count})")
+        if seg_ratio > 0.0:
+            rationale_parts.append(f"non-trivial segmented footprint ({seg_ratio * 100:.1f}% area)")
+        if has_second_pass and second_pass_decision == "positive":
+            rationale_parts.append("supportive second-pass boundary-overlay review")
+        rationale = _ensure_sentence(
+            "Landslide presence is supported by " + ", ".join(rationale_parts) + "."
+            if rationale_parts
+            else "Landslide presence is supported by cross-stage evidence convergence."
+        )
+    else:
+        rationale = _ensure_sentence(
+            "Landslide presence is not supported because screening, segmentation-guided region evidence, and corroborative signals do not jointly meet positive-evidence criteria."
+        )
+    rationale = f"{rationale} {_ensure_sentence(f'Integrated interpretation: {tool_interpretation}') }"
+
+    # Image Quality Assessment
+    quality_assessment = "Image quality supports stable terrain-feature interpretation with sufficient contrast for morphology reading."
+    if has_second_pass:
+        quality_assessment += " A second-pass whole-image boundary-overlay review added an extra consistency check."
+    elif region_count > 0:
+        quality_assessment += " Segmentation-driven region evidence is available, though no second-pass boundary-overlay review was used."
+    quality_assessment = _ensure_sentence(quality_assessment)
+
+    # Relative Position Within Image Frame
+    relative_position = _ensure_sentence(frame_position_text)
+
+    # Environmental Impact
     if has_landslide and nearby_count > 0:
         environmental_impact = _ensure_sentence(
             f"Potential environmental and infrastructure exposure exists around {nearby_count} mapped nearby feature(s)"
@@ -848,6 +923,26 @@ def _format_structured_final_description(
             "No clear downstream environmental impact is inferred from the current negative determination."
         )
 
+    # Confidence Level
+    confidence_level = _ensure_sentence(
+        f"For confidence, {confidence_phrase}; the verdict itself rests on agreement between "
+        "whole-image VLM screening and segmentation."
+    )
+
+    # Uncertainty Analysis
+    uncertainty = _clean_text(report.get("uncertainty", ""), "No explicit uncertainty statement was provided.")
+    if has_second_pass:
+        if second_pass_description_only:
+            uncertainty += " The second-pass boundary-overlay review was descriptive and did not add an extra yes/no vote."
+        elif second_pass_decision == "negative":
+            uncertainty += " Counter-evidence from second-pass review increases interpretation uncertainty."
+        elif second_pass_decision == "uncertain":
+            uncertainty += " Second-pass review remained inconclusive."
+    else:
+        uncertainty += " No whole-image second-pass boundary-overlay review was used."
+    uncertainty_analysis = _ensure_sentence(uncertainty)
+
+    # Causal Inference
     causal_parts: list[str] = []
     if slope is not None:
         causal_parts.append(f"steep topography ({float(slope):.2f}° slope) may predispose instability")
@@ -862,6 +957,7 @@ def _format_structured_final_description(
     else:
         causal_inference = _ensure_sentence("Current evidence does not justify a positive causal inference for landslide occurrence.")
 
+    # Geographic Context (must include slope/aspect and OSM POI)
     geo_parts = [
         _ensure_sentence(_format_slope_aspect_line(slope, aspect)),
         _ensure_sentence(_summarize_osm_poi(nearby)),
@@ -874,37 +970,17 @@ def _format_structured_final_description(
         compact_geo = geo_evidence.replace(" ", "").lower()
         if "nearby_features=" not in compact_geo:
             geo_parts.append(_ensure_sentence(f"Additional geographic note: {geo_evidence}"))
-    geographic_exposure_context = " ".join([environmental_impact, causal_inference] + geo_parts)
-
-    # Reliability and Uncertainty
-    reliability_parts = [
-        "Decision reliability is described qualitatively from cross-stage agreement; no calibrated overall confidence score is reported."
-    ]
-    if has_second_pass:
-        if second_pass_description_only:
-            reliability_parts.append(
-                "The second-pass boundary-overlay review was descriptive and did not add an extra yes/no vote."
-            )
-        elif second_pass_decision == "negative":
-            reliability_parts.append("Counter-evidence from second-pass review increases interpretation uncertainty.")
-        elif second_pass_decision == "uncertain":
-            reliability_parts.append("Second-pass review remained inconclusive.")
-        else:
-            reliability_parts.append("Second-pass boundary-overlay review was incorporated as supporting context.")
-    else:
-        reliability_parts.append("No whole-image second-pass boundary-overlay review was used.")
-    uncertainty = _clean_text(report.get("uncertainty", ""), "No explicit uncertainty statement was provided.")
-    reliability_parts.append(uncertainty)
-    reliability_uncertainty = " ".join(_ensure_sentence(part) for part in reliability_parts if part)
+    geographic_context = " ".join(geo_parts)
 
     # Final Determination
     if has_landslide:
         final_determination = _ensure_sentence(
-            f"Landslide presence is affirmed based on multi-stage evidence convergence (severity={severity})."
+            f"Landslide presence is affirmed by whole-image screening / segmentation agreement "
+            f"({confidence_phrase})."
         )
     else:
         final_determination = _ensure_sentence(
-            "No landslide is indicated under the current multi-stage evidence."
+            f"No landslide is indicated under the current cross-modality evidence; {confidence_phrase}."
         )
 
     return "\n".join(
@@ -917,17 +993,38 @@ def _format_structured_final_description(
             "### Evidence Summary",
             evidence_summary,
             "",
-            "### Image and Spatial Interpretation",
-            image_spatial_interpretation,
+            "### Spatial Distribution",
+            spatial_distribution,
+            "",
+            "### Image Feature Description",
+            image_feature_description,
             "",
             "### Landslide Typology (Reference Only)",
             typology,
             "",
-            "### Geographic and Exposure Context",
-            geographic_exposure_context,
+            "### Rationale for Landslide Presence",
+            rationale,
             "",
-            "### Reliability and Uncertainty",
-            reliability_uncertainty,
+            "### Image Quality Assessment",
+            quality_assessment,
+            "",
+            "### Relative Position Within Image Frame",
+            relative_position,
+            "",
+            "### Environmental Impact",
+            environmental_impact,
+            "",
+            "### Confidence Level",
+            confidence_level,
+            "",
+            "### Uncertainty Analysis",
+            uncertainty_analysis,
+            "",
+            "### Causal Inference",
+            causal_inference,
+            "",
+            "### Geographic Context",
+            geographic_context,
             "",
             "### Final Determination",
             final_determination,
@@ -946,14 +1043,16 @@ def _build_early_negative_report(
     summary = _negative_scene_summary(stage1, refinement)
     geo_count = int((geo_context or {}).get("count", 0) or 0)
     cls_name = str((classification or {}).get("class_name", "") or "").strip()
+    # Same decision rule as the full path: negative here, confidence = the
+    # screening model's own score (or None), never a hand-rolled formula.
+    _decision = get_policy().fuse_decision(stage1=stage1 or {}, segmentation=None, refinement=refinement)
+    _cls_conf = (classification or {}).get("confidence")
     report = {
         "report_version": "1.0",
         "summary": summary,
         "whole_image_overview": _stage1_scene_description(stage1),
-        "has_landslide": False,
-        "confidence": None,
-        "confidence_source": "not_computed",
-        "severity": "none",
+        "has_landslide": bool(_decision["has_landslide"]),
+        "classification_confidence": round(float(_cls_conf), 4) if isinstance(_cls_conf, (int, float)) else None,
         "landslide_type": "unknown",
         "key_metrics": {
             "regions_count": int(screening["region_count"]),
@@ -995,30 +1094,34 @@ def _fallback_description(
     gate: dict | None,
     segmentation: dict | None,
     llm_second_pass: dict | None,
+    fused_decision: dict | None = None,
 ) -> str:
     stage1 = stage1 or {}
     refinement = refinement or {}
     classification = classification or {}
     segmentation = segmentation or {}
-    screening = _screening_decision(stage1, refinement)
+    screening = _screening_decision(stage1, refinement, segmentation)
     region_count = int(screening["region_count"])
     seg_ratio = float(segmentation.get("area_ratio", 0.0) or 0.0)
     seg_pixels = int(segmentation.get("landslide_pixels", 0) or 0)
     geo_count = int((geo_context or {}).get("count", 0) or 0)
     cls_name = str(classification.get("class_name", "") or "").strip()
-    has_landslide = bool(stage1.get("has_landslide", False) or region_count > 0 or seg_ratio >= 0.01)
-    severity = "none"
-    if has_landslide:
-        severity = "high" if seg_ratio >= 0.15 else ("medium" if seg_ratio >= 0.05 else "low")
+    # Never re-derive the verdict here - carry the one decision from the policy.
+    decision = fused_decision or _derive_fused_decision(
+        stage1=stage1, refinement=refinement, segmentation=segmentation,
+        llm_second_pass=llm_second_pass,
+        gate=gate,
+    )
+    has_landslide = bool(decision["has_landslide"])
+    _conf = decision["confidence"]
 
     report = {
         "report_version": "1.0",
         "summary": _negative_scene_summary(stage1, refinement) if not has_landslide else _stage1_scene_description(stage1),
         "whole_image_overview": _stage1_scene_description(stage1),
         "has_landslide": has_landslide,
-        "confidence": None,
-        "confidence_source": "not_computed",
-        "severity": severity,
+        "confidence": round(float(_conf), 4) if _conf is not None else None,
+        "confidence_source": decision.get("confidence_source", "unavailable"),
         "landslide_type": cls_name if has_landslide and cls_name else "unknown",
         "key_metrics": {
             "regions_count": region_count,
@@ -1056,8 +1159,7 @@ def run_stage5(
     gate: dict | None,
     segmentation: dict | None,
     llm_second_pass: dict | None,
-    llm_second_pass_threshold: float,
-    min_region_score: float = 0.45,
+    unavailable_evidence: list | None = None,
 ) -> dict:
     segmentation = segmentation or {
         "mask_path": "",
@@ -1066,7 +1168,7 @@ def run_stage5(
         "area_ratio": 0.0,
         "polygon_count": 0,
     }
-    screening = _screening_decision(stage1, refinement)
+    screening = _screening_decision(stage1, refinement, segmentation)
     if not screening["has_positive_screening"]:
         return _build_early_negative_report(
             stage1=stage1,
@@ -1079,10 +1181,7 @@ def run_stage5(
         stage1=stage1,
         refinement=refinement,
         segmentation=segmentation,
-        classification=classification,
         llm_second_pass=llm_second_pass,
-        llm_second_pass_threshold=llm_second_pass_threshold,
-        min_region_score=min_region_score,
         gate=gate,
     )
 
@@ -1095,8 +1194,49 @@ def run_stage5(
         gate=gate,
         llm_second_pass=llm_second_pass,
         fused_decision=fused_decision,
+        unavailable_evidence=unavailable_evidence,
     )
     llm_report["whole_image_overview"] = _stage1_scene_description(stage1)
+    llm_report["has_landslide"] = bool(fused_decision["has_landslide"])
+    # Only the subtype classifier carries a genuine (softmax) confidence; the
+    # detection verdict is a rule-based cross-modality decision, so no VLM-derived
+    # detection confidence is surfaced in the report.
+    _cls_conf = (classification or {}).get("confidence")
+    llm_report["classification_confidence"] = (
+        round(float(_cls_conf), 4) if isinstance(_cls_conf, (int, float)) else None
+    )
+    llm_report.pop("confidence", None)
+    llm_report.pop("confidence_source", None)
+    # Severity/hazard cannot be inferred from a single image and its model
+    # outputs. Keep only directly traceable detection evidence in the report.
+    llm_report.pop("severity", None)
+
+    # The narrative model never sees the image, so it contributes no subtype of
+    # its own; the subtype and its consistency come from the two image
+    # classifiers inside the classification tool.
+    llm_report.pop("llm_landslide_type", None)
+    reconciliation = _classifier_reconciliation(classification)
+    reconciliation["report_note"] = _classification_reconciliation_report_note(reconciliation)
+    llm_report["classification_reconciliation"] = reconciliation
+    reference_note = str(llm_report.get("classification_reference_note", "") or "").strip()
+    report_note = str(reconciliation["report_note"] or "").strip()
+    llm_report["classification_reference_note"] = " ".join(
+        part for part in (reference_note, report_note) if part
+    )
+
+    resolved_label = str(reconciliation.get("resolved_label", "") or "").strip()
+    if llm_report["has_landslide"]:
+        if reconciliation.get("status") == "conflict":
+            llm_report["landslide_type"] = "classification conflict"
+        else:
+            llm_report["landslide_type"] = (
+                resolved_label
+                or str((classification or {}).get("class_name", "") or "")
+                or "unknown"
+            )
+    else:
+        llm_report["landslide_type"] = "unknown"
+
     final_description = str(llm_report.get("final_description", "") or "").strip()
     if not final_description:
         final_description = _fallback_description(
@@ -1107,24 +1247,11 @@ def run_stage5(
             gate=gate,
             segmentation=segmentation,
             llm_second_pass=llm_second_pass,
+            fused_decision=fused_decision,
         )
         llm_report["summary"] = llm_report.get("summary") or final_description
         llm_report["final_description"] = final_description
         llm_report["report_source"] = llm_report.get("report_source") or "fallback"
-
-    llm_report["has_landslide"] = bool(fused_decision["has_landslide"])
-    llm_report["confidence"] = None
-    llm_report["confidence_source"] = str(fused_decision.get("confidence_source", "not_computed"))
-    llm_report["severity"] = str(fused_decision["severity"])
-    llm_report["landslide_type"] = (
-        str(
-            llm_report.get("landslide_type")
-            or (classification or {}).get("class_name")
-            or "unknown"
-        )
-        if llm_report["has_landslide"]
-        else "unknown"
-    )
 
     recommendations = llm_report.get("recommendations")
     if not isinstance(recommendations, list) or not recommendations:
@@ -1133,15 +1260,80 @@ def run_stage5(
         else:
             llm_report["recommendations"] = ["No positive landslide determination is supported after full-analysis cross-checking."]
 
-    llm_report["final_description"] = _format_structured_final_description(
-        report=llm_report,
-        stage1=stage1,
-        refinement=refinement,
-        classification=classification,
-        geo_context=geo_context,
-        gate=gate,
-        segmentation=segmentation,
-        llm_second_pass=llm_second_pass,
-    )
+    report_source = str(llm_report.get("report_source", "") or "").strip().lower()
+    direct_final_description = str(llm_report.get("final_description", "") or "").strip()
+
+    if report_source.startswith("llm") and _looks_like_llm_final_report(direct_final_description):
+        normalized_final = _normalize_llm_sectioned_report(
+            direct_final_description,
+            overrides={
+                # Computed from the refined mask -- the same value region.locate
+                # returns. The narrative model routinely contradicts it ("lower
+                # right quadrant" for a middle-center candidate), so for this
+                # section the computed value wins.
+                "Relative Position Within Image Frame": _ensure_sentence(
+                    _describe_frame_position(refinement)
+                ),
+                # Make the cross-model resolution visible even when the LLM
+                # returned a complete sectioned narrative of its own.
+                "Landslide Typology (Reference Only)": _ensure_sentence(
+                    str(llm_report.get("classification_reference_note", "") or "")
+                ),
+            },
+        )
+        if normalized_final:
+            llm_report["final_description"] = normalized_final
+        else:
+            llm_report["final_description"] = _format_structured_final_description(
+                report=llm_report,
+                stage1=stage1,
+                refinement=refinement,
+                classification=classification,
+                geo_context=geo_context,
+                gate=gate,
+                segmentation=segmentation,
+                llm_second_pass=llm_second_pass,
+            )
+    else:
+        llm_report["final_description"] = _format_structured_final_description(
+            report=llm_report,
+            stage1=stage1,
+            refinement=refinement,
+            classification=classification,
+            geo_context=geo_context,
+            gate=gate,
+            segmentation=segmentation,
+            llm_second_pass=llm_second_pass,
+        )
     llm_report["decision_support"] = fused_decision["support_summary"]
+    gaps = [g for g in (unavailable_evidence or []) if isinstance(g, dict) and g.get("tool")]
+    if gaps:
+        llm_report["unavailable_evidence"] = gaps
+        llm_report["final_description"] = _state_unavailable_evidence(
+            str(llm_report.get("final_description", "") or ""), gaps
+        )
     return llm_report
+
+
+_UNAVAILABLE_LABELS = {
+    "geo.background": "terrain and geological background",
+    "geo.nearby": "nearby mapped facilities",
+    "cls.run": "landslide subtype classification",
+    "seg.llm_review": "vision-language boundary re-check",
+}
+
+
+def _state_unavailable_evidence(text: str, gaps: list[dict]) -> str:
+    """Guarantee the report states which evidence could not be obtained."""
+    items = "; ".join(
+        f"{_UNAVAILABLE_LABELS.get(g['tool'], g['tool'])} ({g['tool']}): {g.get('reason') or 'not obtained'}"
+        for g in gaps
+    )
+    sentence = (
+        f"Observed: The following evidence was not available for this analysis and was not used: {items}."
+    )
+    marker = "### Uncertainty Analysis"
+    if marker in text:
+        head, tail = text.split(marker, 1)
+        return head + marker + "\n" + sentence + "\n" + tail.lstrip("\n")
+    return (text.rstrip() + "\n\n" + marker + "\n" + sentence).strip()

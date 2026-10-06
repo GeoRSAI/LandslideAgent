@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -20,19 +22,40 @@ class ToolRegistry:
         self._specs[spec.name] = spec
         self._handlers[spec.name] = handler
 
+    # Canonical workflow order for presenting tools to the model. Keeping the
+    # tool list in required-execution order (rather than registration order)
+    # stops a weaker model from calling steps out of sequence.
+    _WORKFLOW_ORDER = (
+        "tiff.info", "llm.first_pass", "seg.run", "seg.refine",
+        "region.locate", "seg.llm_review", "cls.run",
+        "geo.background", "geo.nearby", "fuse.decision",
+        "report.write", "image.tile",
+    )
+
     def list_tools(self) -> list[dict[str, Any]]:
+        order = {name: i for i, name in enumerate(self._WORKFLOW_ORDER)}
+        specs = sorted(
+            self._specs.values(),
+            key=lambda s: (order.get(s.name, len(order)), s.name),
+        )
         return [
             {
                 "name": spec.name,
                 "description": spec.description,
                 "input_schema": spec.input_schema,
             }
-            for spec in self._specs.values()
+            for spec in specs
         ]
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if name not in self._handlers:
             raise KeyError(f"unknown tool: {name}")
+        # Robustness testing only: AGENT_FAULT_INJECT="geo.nearby,seg.llm_review"
+        # makes the listed tools fail as if their backend were down. Unset in
+        # normal runs; applies identically to every agent mode.
+        injected = {t.strip() for t in os.getenv("AGENT_FAULT_INJECT", "").split(",") if t.strip()}
+        if name in injected:
+            raise RuntimeError(f"{name} is unavailable: backend service did not respond")
         return self._handlers[name](arguments)
 
 

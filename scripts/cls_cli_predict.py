@@ -104,7 +104,7 @@ def main() -> int:
     parser.add_argument("--image", required=True)
     parser.add_argument(
         "--mmpretrain-root",
-        default=os.getenv("MMPRETRAIN_ROOT", ""),
+        default=os.getenv("MMPRETRAIN_ROOT", "models/mmpretrain-main"),
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--checkpoint", required=True)
