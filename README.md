@@ -4,6 +4,12 @@ A tool-driven framework for landslide analysis in satellite and aerial imagery, 
 
 This release includes framework code and the web interface. Model weights, trained adapter weights, datasets, private imagery and experiment results are not included.
 
+## Framework overview
+
+![Three-layer LandslideAgent framework: data support, cognitive decision and collaborative execution](docs/figures/Fig1.png)
+
+The framework connects multimodal data preparation, domain adaptation and tool-assisted landslide analysis. This repository distributes the inference framework; datasets and trained weights are provided separately.
+
 ## Dataset
 
 The previously published dataset remains available through the [original dataset download](https://drive.google.com/file/d/1wibzr3qJ4LTCzQzh_jSfEXs48Zla4Nwd/view?usp=sharing). Dataset files are distributed separately from this code release.
@@ -15,6 +21,12 @@ Image metadata -> visual assessment -> segmentation -> refinement / conditional 
 The shared controller lives in `src/agent/controller.py`, the tool-calling loop in `src/orchestration/`, and the alternative LangGraph workflow in `src/graph/landslide_graph.py`. Service endpoints include `/v1/agent/analyze`, `/v1/graph/analyze`, and `/health`. See [methods](docs/METHODS.md).
 
 See the [deployment and usage guide](docs/USAGE.md) for model provisioning, OpenMMLab setup, service startup and configuration.
+
+## Agent workflow
+
+![LandslideAgent tool library, cognitive model, rule controller and structured report workflow](docs/figures/Fig8.png)
+
+The model coordinates tools while the shared rule controller checks evidence and prerequisites. Segmentation, classification and geographic context contribute to the structured report.
 
 ## Installation
 
@@ -75,6 +87,12 @@ See [release preparation](docs/RELEASE_PREPARATION.md) and [contribution guidanc
 ## License
 
 [MIT](LICENSE). Model weights, datasets and third-party components retain their own licenses.
+
+## Dual-head model
+
+![Qwen3-VL multimodal backbone with generation and classification heads and joint training objective](docs/figures/Fig7.png)
+
+The shared backbone supports text generation and an eight-class classification head. The joint loss shown in the figure describes training; this release includes inference scripts and configuration, without training code or model weights. At inference, adapter selection depends on the framework step, as described below.
 
 ## Dual-head inference sources
 
