@@ -2,13 +2,13 @@
 
 A tool-driven framework for landslide analysis in satellite and aerial imagery, combining multimodal reasoning, segmentation, classification, geographic evidence, and structured reports.
 
-This release includes framework code and the web interface. Model weights, trained adapter weights, datasets, private imagery and experiment results are not included.
+This release includes framework code, dual-head training code and the web interface. Model weights, trained adapter weights, datasets, private imagery and experiment results are not included.
 
 ## Framework overview
 
 ![Three-layer LandslideAgent framework: data support, cognitive decision and collaborative execution](docs/figures/Fig1.png)
 
-The framework connects multimodal data preparation, domain adaptation and tool-assisted landslide analysis. This repository distributes the inference framework; datasets and trained weights are provided separately.
+The framework connects multimodal data preparation, domain adaptation and tool-assisted landslide analysis. This repository distributes the inference framework and dual-head training code; datasets and trained weights are provided separately.
 
 ## Dataset
 
@@ -92,7 +92,7 @@ See [release preparation](docs/RELEASE_PREPARATION.md) and [contribution guidanc
 
 ![Qwen3-VL multimodal backbone with generation and classification heads and joint training objective](docs/figures/Fig7.png)
 
-The shared backbone supports text generation and an eight-class classification head. The joint loss shown in the figure describes training; this release includes inference scripts and configuration, without training code or model weights. At inference, adapter selection depends on the framework step, as described below.
+The shared backbone supports text generation and an eight-class classification head. The joint loss shown in the figure is implemented in the [dual-head training script](training/landslide_qwen3vl_dual_head/train_dual_head.py). Run the script with `--help` for model and dataset arguments. At inference, adapter selection depends on the framework step, as described below.
 
 ## Dual-head inference sources
 
